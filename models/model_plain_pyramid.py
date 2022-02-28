@@ -12,15 +12,30 @@ from models.select_network import define_G
 from utils.utils_model import test_mode
 from utils.utils_regularizers import regularizer_orth, regularizer_clip
 
-class ModelPlain(ModelBase):
+class ModelPlainPyramid(ModelBase):
 
     def __init__(self, opt):
-        super(ModelPlain, self).__init__(opt)
+        super(ModelPlainPyramid, self).__init__(opt)
         # ------------------------------------
         # define network
         # ------------------------------------
         self.opt_train = self.opt['train']    # training option
         self.netG = define_G(opt)
+
+        # ------------------------------------
+        # Load Pretrained Parameters
+        # ------------------------------------
+        if self.opt['train']['pretrained']:
+            self.pretrained = torch.load(self.opt['train']['pretrained'], map_location='cpu')
+            for key in list(self.pretrained.keys()):
+                if key in self.opt['train']['param_keys']:
+                    self.pretrained.pop(key)
+
+            model_dict = self.netG.state_dict()
+            model_dict.update(self.pretrained)
+            self.netG.load_state_dict(model_dict)
+            print("Load pretrained model ", self.opt['train']['pretrained'])
+
         self.netG = self.model_to_device(self.netG)
         if self.opt_train['E_decay'] > 0:
             self.netE = define_G(opt).to(self.device).eval()
@@ -99,13 +114,15 @@ class ModelPlain(ModelBase):
         else:
             raise NotImplementedError
 
-    def feed_data(self, data, need_H=True):
+    def feed_data(self, data, need_M=True, need_H=True):
         self.L = data['L'].to(self.device)
+        if need_M:
+            self.M = data['M'].to(self.device)
         if need_H:
             self.H = data['H'].to(self.device)
 
     def netG_forward(self):
-        self.E = self.netG(self.L)
+        self.ME, self.E = self.netG(self.L)
 
     def optimize_parameters(self, current_step):
         
@@ -113,7 +130,7 @@ class ModelPlain(ModelBase):
 
         with my_context():
             self.netG_forward()
-            G_loss = self.G_lossfn_weight * self.G_lossfn(self.E, self.H)
+            G_loss = self.G_lossfn_weight * self.G_lossfn(self.E, self.H) + self.G_lossfn_weight * self.G_lossfn(self.ME, self.M)
             G_loss.backward()
 
         if current_step % self.opt['repeat_step'] == 0:

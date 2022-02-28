@@ -18,6 +18,10 @@ def define_Dataset(dataset_opt):
     # -----------------------------------------
     if dataset_type in ['sr', 'super-resolution']:
         from data.dataset_sr import DatasetSR as D
+    elif dataset_type in ['psr', 'pyramid-super-resolution']:
+        from data.dataset_psr import DatasetPSR as D
+    elif dataset_type in ['ssr', 'stereo-super-resolution']:
+        from data.dataset_ssr import DatasetSSR as D
     else:
         raise NotImplementedError('Dataset [{:s}] is not found.'.format(dataset_type))
 

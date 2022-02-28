@@ -2,3 +2,6 @@
 
 /superresolution/
 */__pycache__/
+/results/
+
+*.pth

@@ -49,6 +49,9 @@ def parse(opt_path, is_train=True):
 
     if 'scale' not in opt:
         opt['scale'] = 1
+    
+    if 'repeat_step' not in opt:
+        opt['repeat_step'] = 1
 
     # ----------------------------------------
     # datasets

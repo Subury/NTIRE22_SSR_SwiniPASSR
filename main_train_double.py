@@ -30,6 +30,7 @@ def main(json_path=None):
     parser.add_argument('--dist', default=False)
 
     opt = option.parse(parser.parse_args().opt, is_train=True)
+    print(opt["path"])
     opt['dist'] = parser.parse_args().dist
 
     if opt['dist']:
@@ -102,6 +103,7 @@ def main(json_path=None):
 
     model = define_Model(opt)
     model.init_train()
+
     if opt['rank'] == 0:
         logger.info(model.info_network())
     
@@ -121,38 +123,34 @@ def main(json_path=None):
                     message += '{:s}: {:.3e} '.format(k, v)
                 logger.info(message)
             
-            if current_step % (opt['repeat_step'] * opt['train']['checkpoint_print']) == 0 and opt['rank'] == 0:
+            if current_step % (opt['repeat_step'] * opt['train']['checkpoint_save']) == 0 and opt['rank'] == 0:
                 logger.info('Saving the model.')
                 model.save(current_step)
             
-            if current_step % (opt['repeat_step'] * opt['train']['checkpoint_print']) == 0 and opt['rank'] == 0:
+            if current_step % (opt['repeat_step'] * opt['train']['checkpoint_test']) == 0 and opt['rank'] == 0:
 
                 idx, avg_psnr = 0, 0.0
 
                 for test_data in test_loader:
-                    idx += 1
-                    image_name_ext = os.path.basename(test_data['L_path'][0])
-                    img_name, ext = os.path.splitext(image_name_ext)
+                    for swap in [False, True]:
+                        idx += 1
+                        model.feed_data(test_data, swap=swap)
+                        model.test()
 
-                    img_dir = os.path.join(opt['path']['images'], img_name)
-                    util.mkdir(img_dir)
+                        visuals = model.current_visuals()
+                        E_img = util.tensor2uint(visuals['E'])
+                        H_img = util.tensor2uint(visuals['H'])
 
-                    model.feed_data(test_data)
-                    model.test()
+                        current_psnr = util.calculate_psnr(E_img, H_img, border=border)
 
-                    visuals = model.current_visuals()
-                    E_img = util.tensor2uint(visuals['E'])
-                    H_img = util.tensor2uint(visuals['H'])
-
-                    current_psnr = util.calculate_psnr(E_img, H_img, border=border)
-
-                    avg_psnr += current_psnr
+                        avg_psnr += current_psnr
 
                 avg_psnr = avg_psnr / idx
                 logger.info('[Validation] iter:{:d}, Average PSNR : {:<.2f}dB\n'.format(current_step // opt['repeat_step'], avg_psnr))
-            
+
             if current_step % opt['repeat_step'] == 0:
                 model.update_learning_rate(current_step)
+            
 
 if __name__ == '__main__':
     main()
