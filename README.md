@@ -1,14 +1,17 @@
-Baseline Reimplement:
-    1. why mean_shift_value: (0.4488, 0.4371, 0.4040) ???
-    2. 对能够整除的图像分辨率，会增加一个 window_size 大小
+2022-03-01
+> [1] SwinIR[48] 的最佳结果为: 23.68% / 23.77%  
+> [2] SwinSSR-PASSR[48] 的最佳结果为: 23.67% / 23.76%  
+> [3] SwinIR-Pyramid[72] 的最佳结果为: 23.55 % / --  
+> [4] SwinIR-Pyramid [Pretrained][48][mean] 的最佳结果: -- / --
 
-Stereo Image Super-Resolution Network:
+<br>
 
-Accomplish:
-    [ ✅ ] 修改训练过程的 log 输出信息
-    [   ]  SR_ flickr1024_s64w8_SwinIR-M_x4 配置文件完成 
-    [   ]  repeat batch to big batch_size train
+[👩] The mother of success:  
+>   [1] PASSR/iPASSR SOTA的双目超分, iPASSR最佳结果 23.46+  
+>   [2] 更多的TTA方法，四种TTA与八种TTA相比，仅损失PSNR值0.01%  
+>   [3] fp16的训练方法，训练崩溃  
+>   [4] LR_X4 -> HR -> HR 失败，网络貌似没有学习到更多有用的东西
 
-Further:
-    1. 真•inference 过程的验证
-    2. 
+[🚗] Best Source:
+>   [KaiJin] TTA(-/+): 23.73% / 23.82%  
+>   [ZqWei]  TTA(-/+): 23.68% / 23.77%
