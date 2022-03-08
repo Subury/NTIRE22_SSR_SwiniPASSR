@@ -1,4 +1,5 @@
 import random
+import numpy as np
 import torch.utils.data as data
 import utils.utils_image as util
 
@@ -99,9 +100,14 @@ class DatasetSSR(data.Dataset):
             # --------------------------------
             # augmentation - flip and/or rotate
             # --------------------------------
-            mode = random.randint(0, 7)
+            mode = 2 * random.randint(0, 3)
             img_L_Left, img_H_Left = util.augment_img(img_L_Left, mode=mode), util.augment_img(img_H_Left, mode=mode)
             img_L_Right, img_H_Right = util.augment_img(img_L_Right, mode=mode), util.augment_img(img_H_Right, mode=mode)
+
+            # RGB Prem
+            perm = np.random.permutation(3)
+            img_L_Left, img_H_Left = img_L_Left[:,:,perm], img_H_Left[:,:,perm]
+            img_L_Right, img_H_Right = img_L_Right[:,:,perm], img_H_Right[:,:,perm]
 
         # ------------------------------------
         # L/H pairs, HWC to CHW, numpy to tensor
@@ -112,16 +118,10 @@ class DatasetSSR(data.Dataset):
         if L_path is None:
             L_Left_path, L_Right_path = H_Left_path, H_Right_path
         
-        if random.randint(0, 1):
-            return {'L_Left': img_L_Left, 'L_Right': img_L_Right,
-                    'H_Left': img_H_Left, 'H_Right': img_H_Right,
-                    'L_Left_path': L_Left_path, 'L_Right_path': L_Right_path, 
-                    'H_Left_path': H_Left_path, 'H_Right_path': H_Right_path}
-        else:
-            return {'L_Left': img_L_Right, 'L_Right': img_L_Left,
-                    'H_Left': img_H_Right, 'H_Right': img_H_Left,
-                    'L_Left_path': L_Right_path, 'L_Right_path': L_Left_path, 
-                    'H_Left_path': H_Right_path, 'H_Right_path': H_Left_path}
+        return {'L_Left': img_L_Left, 'L_Right': img_L_Right,
+                'H_Left': img_H_Left, 'H_Right': img_H_Right,
+                'L_Left_path': L_Left_path, 'L_Right_path': L_Right_path, 
+                'H_Left_path': H_Left_path, 'H_Right_path': H_Right_path}
 
     def __len__(self):
         return len(self.paths_H) // 2

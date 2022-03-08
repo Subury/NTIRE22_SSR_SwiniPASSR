@@ -4,6 +4,7 @@ from collections import OrderedDict
 import torch
 import torch.nn as nn
 from torch.optim import Adam
+import torch.nn.functional as F
 from torch.optim import lr_scheduler
 
 from models.model_base import ModelBase
@@ -114,20 +115,16 @@ class ModelPlain2(ModelBase):
         else:
             raise NotImplementedError
 
-    def feed_data(self, data, need_H=True, swap=False):
-        if swap:
-            self.L_Left, self.L_Right = data['L_Right'].to(self.device), data['L_Left'].to(self.device)
-            if need_H:
-                self.H_Left, self.H_Right = data['H_Right'].to(self.device), data['H_Left'].to(self.device)
-        else:
-            self.L_Left, self.L_Right = data['L_Left'].to(self.device), data['L_Right'].to(self.device)
-            if need_H:
-                self.H_Left, self.H_Right = data['H_Left'].to(self.device), data['H_Right'].to(self.device)
+    def feed_data(self, data, need_H=True):
+
+        self.L_Left, self.L_Right = data['L_Left'].to(self.device), data['L_Right'].to(self.device)
+        if need_H:
+            self.H_Left, self.H_Right = data['H_Left'].to(self.device), data['H_Right'].to(self.device)
 
     def netG_forward(self):
-        self.E, (self.M_right_to_left, self.M_left_to_right), \
-        (self.M_left_right_left, self.M_right_left_right), \
-        (self.V_left_to_right, self.V_right_to_left) = self.netG(self.L_Left, self.L_Right)
+        self.EL, self.ER, \
+        (self.M_right_to_left, self.M_left_to_right), \
+        (self.V_left, self.V_right) = self.netG(self.L_Left, self.L_Right)
 
     def optimize_parameters(self, current_step):
         
@@ -136,30 +133,48 @@ class ModelPlain2(ModelBase):
         with my_context():
             b, c, h, w = self.L_Left.shape
             self.netG_forward()
-            G_loss = self.G_lossfn_weight * self.G_lossfn(self.E, self.H_Left)
 
-            ### loss_smoothness
+            ### SR Loss
+            loss_sr = self.G_lossfn(self.EL, self.H_Left) + self.G_lossfn(self.ER, self.H_Right)
+
+            ### Photometric Loss 
+            Res_left = torch.abs(self.H_Left - F.interpolate(self.L_Left, scale_factor=4, mode='bicubic', align_corners=False, recompute_scale_factor=True))
+            Res_left = F.interpolate(Res_left, scale_factor=0.25, mode='bicubic', align_corners=False, recompute_scale_factor=True)
+            Res_right = torch.abs(self.H_Right - F.interpolate(self.L_Right, scale_factor=4, mode='bicubic', align_corners=False, recompute_scale_factor=True))
+            Res_right = F.interpolate(Res_right, scale_factor=0.25, mode='bicubic', align_corners=False, recompute_scale_factor=True)
+            Res_leftT = torch.bmm(self.M_right_to_left.contiguous().view(b * h, w, w), Res_right.permute(0, 2, 3, 1).contiguous().view(b * h, w, c)
+                                  ).view(b, h, w, c).contiguous().permute(0, 3, 1, 2)
+            Res_rightT = torch.bmm(self.M_left_to_right.contiguous().view(b * h, w, w), Res_left.permute(0, 2, 3, 1).contiguous().view(b * h, w, c)
+                                   ).view(b, h, w, c).contiguous().permute(0, 3, 1, 2)
+            loss_photo = self.G_lossfn(Res_left * self.V_left.repeat(1, 3, 1, 1), Res_leftT * self.V_left.repeat(1, 3, 1, 1)) + \
+                         self.G_lossfn(Res_right * self.V_right.repeat(1, 3, 1, 1), Res_rightT * self.V_right.repeat(1, 3, 1, 1))
+
+            ### Smoothness Loss
             loss_h = self.G_lossfn(self.M_right_to_left[:, :-1, :, :], self.M_right_to_left[:, 1:, :, :]) + \
                      self.G_lossfn(self.M_left_to_right[:, :-1, :, :], self.M_left_to_right[:, 1:, :, :])
             loss_w = self.G_lossfn(self.M_right_to_left[:, :, :-1, :-1], self.M_right_to_left[:, :, 1:, 1:]) + \
                      self.G_lossfn(self.M_left_to_right[:, :, :-1, :-1], self.M_left_to_right[:, :, 1:, 1:])
             loss_smooth = loss_w + loss_h
 
-            ### loss_cycle
-            Identity = torch.autograd.Variable(torch.eye(w, w).repeat(b, h, 1, 1), requires_grad=False).to(self.L_Left.device)
-            loss_cycle = self.G_lossfn(self.M_left_right_left * self.V_left_to_right.permute(0, 2, 1, 3), Identity * self.V_left_to_right.permute(0, 2, 1, 3)) + \
-                         self.G_lossfn(self.M_right_left_right * self.V_right_to_left.permute(0, 2, 1, 3), Identity * self.V_right_to_left.permute(0, 2, 1, 3))
+            ### Cycle Loss
+            Res_left_cycle = torch.bmm(self.M_right_to_left.contiguous().view(b * h, w, w), Res_rightT.permute(0, 2, 3, 1).contiguous().view(b * h, w, c)
+                                        ).view(b, h, w, c).contiguous().permute(0, 3, 1, 2)
+            Res_right_cycle = torch.bmm(self.M_left_to_right.contiguous().view(b * h, w, w), Res_leftT.permute(0, 2, 3, 1).contiguous().view(b * h, w, c)
+                                        ).view(b, h, w, c).contiguous().permute(0, 3, 1, 2)
+            loss_cycle = self.G_lossfn(Res_left * self.V_left.repeat(1, 3, 1, 1), Res_left_cycle * self.V_left.repeat(1, 3, 1, 1)) + \
+                         self.G_lossfn(Res_right * self.V_right.repeat(1, 3, 1, 1), Res_right_cycle * self.V_right.repeat(1, 3, 1, 1))
 
-            ### loss_photometric
-            LR_right_warped = torch.bmm(self.M_right_to_left.contiguous().view(b*h,w,w), self.L_Left.permute(0,2,3,1).contiguous().view(b*h, w, c))
-            LR_right_warped = LR_right_warped.view(b, h, w, c).contiguous().permute(0, 3, 1, 2)
-            LR_left_warped = torch.bmm(self.M_left_to_right.contiguous().view(b * h, w, w), self.L_Right.permute(0, 2, 3, 1).contiguous().view(b * h, w, c))
-            LR_left_warped = LR_left_warped.view(b, h, w, c).contiguous().permute(0, 3, 1, 2)
+            ### Consistency Loss
+            SR_left_res = F.interpolate(torch.abs(self.H_Left - self.EL), scale_factor=0.25, mode='bicubic', align_corners=False, recompute_scale_factor=True)
+            SR_right_res = F.interpolate(torch.abs(self.H_Right - self.ER), scale_factor=0.25, mode='bicubic', align_corners=False, recompute_scale_factor=True)
+            SR_left_resT = torch.bmm(self.M_right_to_left.detach().contiguous().view(b * h, w, w), SR_right_res.permute(0, 2, 3, 1).contiguous().view(b * h, w, c)
+                                     ).view(b, h, w, c).contiguous().permute(0, 3, 1, 2)
+            SR_right_resT = torch.bmm(self.M_left_to_right.detach().contiguous().view(b * h, w, w), SR_left_res.permute(0, 2, 3, 1).contiguous().view(b * h, w, c)
+                                      ).view(b, h, w, c).contiguous().permute(0, 3, 1, 2)
+            loss_cons = self.G_lossfn(SR_left_res * self.V_left.repeat(1, 3, 1, 1), SR_left_resT * self.V_left.repeat(1, 3, 1, 1)) + \
+                        self.G_lossfn(SR_right_res * self.V_right.repeat(1, 3, 1, 1), SR_right_resT * self.V_right.repeat(1, 3, 1, 1))
 
-            loss_photo = self.G_lossfn(self.L_Left * self.V_left_to_right, LR_right_warped * self.V_left_to_right) + \
-                          self.G_lossfn(self.L_Right * self.V_right_to_left, LR_left_warped * self.V_right_to_left)
-
-            G_loss = G_loss + 0.005 * (loss_smooth + loss_cycle + loss_photo)
+            G_loss = loss_sr + 0.1 * loss_photo + 0.1 * (loss_smooth + loss_cycle + loss_cons)
             G_loss.backward()
 
         if current_step % self.opt['repeat_step'] == 0:
@@ -188,7 +203,11 @@ class ModelPlain2(ModelBase):
                 self.update_E(self.opt_train['E_decay'])
 
         # self.log_dict['G_loss'] = G_loss.item()/self.E.size()[0]  # if `reduction='sum'`
-        self.log_dict['G_loss'] = G_loss.item()
+        for key in ['loss_sr', 'loss_photo', 'loss_smooth', 'loss_cycle', 'loss_cons', 'G_loss']:
+            if key in self.log_dict.keys():
+                self.log_dict[key].append(eval(key+'.item()'))
+            else:
+                self.log_dict[key] = [eval(key+'.item()')]
     
     def test(self):
         self.netG.eval()
@@ -207,18 +226,24 @@ class ModelPlain2(ModelBase):
     
     def current_visuals(self, need_H=True):
         out_dict = OrderedDict()
-        out_dict['L'] = self.L_Left.detach()[0].float().cpu()
-        out_dict['E'] = self.E.detach()[0].float().cpu()
+        out_dict['LL'] = self.L_Left.detach()[0].float().cpu()
+        out_dict['EL'] = self.EL.detach()[0].float().cpu()
+        out_dict['LR'] = self.L_Right.detach()[0].float().cpu()
+        out_dict['ER'] = self.ER.detach()[0].float().cpu()
         if need_H:
-            out_dict['H'] = self.H_Left.detach()[0].float().cpu()
+            out_dict['HL'] = self.H_Left.detach()[0].float().cpu()
+            out_dict['HR'] = self.H_Right.detach()[0].float().cpu()
         return out_dict
     
     def current_results(self, need_H=True):
         out_dict = OrderedDict()
-        out_dict['L'] = self.L.detach().float().cpu()
-        out_dict['E'] = self.E.detach().float().cpu()
+        out_dict['LL'] = self.L_Left.detach().float().cpu()
+        out_dict['EL'] = self.EL.detach().float().cpu()
+        out_dict['LR'] = self.L_Right.detach().float().cpu()
+        out_dict['ER'] = self.ER.detach().float().cpu()
         if need_H:
-            out_dict['H'] = self.H.detach().float().cpu()
+            out_dict['HL'] = self.H_Left.detach().float().cpu()
+            out_dict['HR'] = self.H_Right.detach().float().cpu()
         return out_dict
     
     def print_network(self):

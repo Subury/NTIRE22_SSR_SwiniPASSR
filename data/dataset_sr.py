@@ -1,4 +1,5 @@
 import random
+import numpy as np
 import torch.utils.data as data
 import utils.utils_image as util
 
@@ -89,6 +90,10 @@ class DatasetSR(data.Dataset):
             # --------------------------------
             mode = random.randint(0, 7)
             img_L, img_H = util.augment_img(img_L, mode=mode), util.augment_img(img_H, mode=mode)
+
+            # RGB Prem
+            perm = np.random.permutation(3)
+            img_L, img_H = img_L[:,:,perm], img_H[:,:,perm]
 
         # ------------------------------------
         # L/H pairs, HWC to CHW, numpy to tensor

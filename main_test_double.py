@@ -7,7 +7,7 @@ import os
 import torch
 import requests
 
-from models.network_swinpassr import SwinPASSR as net
+from models.network_swinipassr import SwiniPASSR as net
 from utils import utils_calculate_psnr_ssim as util
 
 
@@ -58,7 +58,7 @@ def main():
 
     for idx, path in enumerate(sorted(glob.glob(os.path.join(folder, '*')))):
         output_result = None
-        for aumentation_mode in range(8):
+        for aumentation_mode in range(0, 8, 1):
             # read image
             imgname, left_img_lq, right_img_lq, img_gt = get_image_pair(args, path, mode=aumentation_mode)  # image to HWC-BGR, float32
             left_img_lq = np.transpose(left_img_lq if left_img_lq.shape[2] == 1 else left_img_lq[:, :, [2, 1, 0]], (2, 0, 1))  # HCW-BGR to CHW-RGB
@@ -76,7 +76,7 @@ def main():
                 left_img_lq = torch.cat([left_img_lq, torch.flip(left_img_lq, [3])], 3)[:, :, :, :w_old + w_pad]
                 right_img_lq = torch.cat([right_img_lq, torch.flip(right_img_lq, [2])], 2)[:, :, :h_old + h_pad, :]
                 right_img_lq = torch.cat([right_img_lq, torch.flip(right_img_lq, [3])], 3)[:, :, :, :w_old + w_pad]
-                output = test(left_img_lq, right_img_lq, model, args, window_size)[0]
+                output = test(left_img_lq, right_img_lq, model, args, window_size)
                 output = output[..., :h_old * args.scale, :w_old * args.scale]
 
             # save image
@@ -112,7 +112,7 @@ def main():
 
         output = output_result / 8.0
         output = (output * 255.0).round().astype(np.uint8)  # float32 to uint8
-        cv2.imwrite(f'{save_dir}/{imgname}.png', output)
+        # cv2.imwrite(f'{save_dir}/{imgname}.png', output)
 
         # evaluate psnr/ssim/psnr_b
         if img_gt is not None:
@@ -155,9 +155,9 @@ def main():
 def define_model(args):
     # 001 classical image sr
     if args.task == 'classical_sr':
-        model = net(upscale=args.scale, in_chans=3, img_size=args.training_patch_size, window_size=8,
-                    img_range=1., depths=[6, 6, 6, 6, 6, 6], embed_dim=180, num_heads=[6, 6, 6, 6, 6, 6],
-                    mlp_ratio=2, upsampler='pixelshuffle', resi_connection='1conv')
+        model = net(upscale=args.scale, in_chans=3, img_size=args.training_patch_size, window_size=12,
+                    img_range=1.0, depths=[9, 9, 9, 9, 9, 9], embed_dim=180, num_heads=[9, 9, 9, 9, 9, 9],
+                    mlp_ratio=2, upsampler="pixelshuffle", resi_connection="3conv")
         param_key_g = 'params'
 
     # 002 lightweight image sr
@@ -207,16 +207,6 @@ def define_model(args):
 
     pretrained_model = torch.load(args.model_path, map_location='cpu')
 
-    # from io import BytesIO, BufferedReader
-    # pretrained_model = None
-    # for index in range(100):
-    #     with open('/workspace/gago_weizq/' + str(index), 'rb') as rf:
-    #         if pretrained_model is not None:
-    #             pretrained_model += rf.read()
-    #         else:
-    #             pretrained_model = rf.read()
-    # pretrained_model = torch.load(BufferedReader(BytesIO(pretrained_model)), map_location='cpu')    
-    
     model.load_state_dict(pretrained_model[param_key_g] if param_key_g in pretrained_model.keys() else pretrained_model, strict=True)
 
     return model
@@ -319,7 +309,7 @@ def get_image_pair(args, path, mode=0):
 def test(left_img_lq, right_img_lq, model, args, window_size):
     if args.tile is None:
         # test the image as a whole
-        output = model(left_img_lq, right_img_lq)
+        output = model(left_img_lq, right_img_lq)[0]
     else:
         # test the image tile by tile
         raise ValueError("Current not complete ...")

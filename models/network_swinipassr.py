@@ -1,6 +1,7 @@
 # 
 
 import math
+from nntplib import NNTP
 import torch
 import numpy as np
 import torch.nn as nn
@@ -627,77 +628,71 @@ class ResB(nn.Module):
         return out + x
 
 
+def M_Relax(M, num_pixels):
+    _, u, v = M.shape
+    M_list = []
+    M_list.append(M.unsqueeze(1))
+    for i in range(num_pixels):
+        pad = nn.ZeroPad2d(padding=(0, 0, i+1, 0))
+        pad_M = pad(M[:, :-1-i, :])
+        M_list.append(pad_M.unsqueeze(1))
+    for i in range(num_pixels):
+        pad = nn.ZeroPad2d(padding=(0, 0, 0, i+1))
+        pad_M = pad(M[:, i+1:, :])
+        M_list.append(pad_M.unsqueeze(1))
+    M_relaxed = torch.sum(torch.cat(M_list, 1), dim=1)
+    return M_relaxed
+
+
 class ParallaxAttentionModule(nn.Module):
 
-    def __init__(self, channels):
+    def __init__(self, channels, layers):
         super(ParallaxAttentionModule, self).__init__()
-        self.b1 = nn.Conv2d(channels, channels, 1, 1, 0, bias=True)
-        self.b2 = nn.Conv2d(channels, channels, 1, 1, 0, bias=True)
-        self.b3 = nn.Conv2d(channels, channels, 1, 1, 0, bias=True)
+        self.bq = nn.Conv2d(layers * channels, channels, 1, 1, 0, groups=layers, bias=True)
+        self.bs = nn.Conv2d(layers * channels, channels, 1, 1, 0, groups=layers, bias=True)
         self.softmax = nn.Softmax(-1)
-        self.rb = ResB(channels)
-        self.fusion = nn.Conv2d(channels * 2 + 1, channels, 1, 1, 0, bias=True)
-    
-    def morphologic_process(self, mask):
-        device = mask.device
-        b,_,_,_ = mask.shape
-        mask = torch.logical_not(mask)
-        mask_np = mask.cpu().numpy().astype(bool)
-        mask_np = morphology.remove_small_objects(mask_np, 20, 2)
-        mask_np = morphology.remove_small_holes(mask_np, 10, 2)
-        for idx in range(b):
-            buffer = np.pad(mask_np[idx,0,:,:],((3,3),(3,3)),'constant')
-            buffer = morphology.binary_closing(buffer, morphology.disk(3))
-            mask_np[idx,0,:,:] = buffer[3:-3,3:-3]
-        mask_np = 1-mask_np
-        mask_np = mask_np.astype(float)
+        self.rb = ResB(layers * channels)
+        self.bn = nn.BatchNorm2d(layers * channels)
 
-        return torch.from_numpy(mask_np).float().to(device)
-    
-    def __call__(self, x_left, x_right):
+    def __call__(self, x_left, x_right, catfea_left, catfea_right):
+        b, c0, h0, w0 = x_left.shape
+        Q = self.bq(self.rb(self.bn(catfea_left)))
 
-        b, c, h, w = x_left.shape
-        buffer_left = self.rb(x_left)
-        buffer_right = self.rb(x_right)
+        b, c, h, w = Q.shape
+        Q = Q - torch.mean(Q, 3).unsqueeze(3).repeat(1, 1, 1, w)
+        K = self.bs(self.rb(self.bn(catfea_right)))
+        K = K - torch.mean(K, 3).unsqueeze(3).repeat(1, 1, 1, w)
 
-        ### M_{right_to_left}
-        Q = self.b1(buffer_left).contiguous().permute(0, 2, 3, 1)                                                # B * H * W * C
-        S = self.b2(buffer_right).contiguous().permute(0, 2, 1, 3)                                               # B * H * C * W
-        score = torch.bmm(Q.contiguous().view(-1, w, c),
-                          S.contiguous().view(-1, c, w))                                            # (B*H) * W * W
-        M_right_to_left = self.softmax(score)
+        score = torch.bmm(Q.permute(0, 2, 3, 1).contiguous().view(-1, w, c),                    # (B*H) * Wl * C
+                          K.permute(0, 2, 1, 3).contiguous().view(-1, c, w))                    # (B*H) * C * Wr
+        M_right_to_left = self.softmax(score)                                                   # (B*H) * Wl * Wr
+        M_left_to_right = self.softmax(score.permute(0, 2, 1))                                  # (B*H) * Wr * Wl
 
-        ### M_{left_to_right}
-        Q = self.b1(buffer_right).contiguous().permute(0, 2, 3, 1)                                               # B * H * W * C
-        S = self.b2(buffer_left).contiguous().permute(0, 2, 1, 3)                                                # B * H * C * W
-        score = torch.bmm(Q.contiguous().view(-1, w, c),
-                          S.contiguous().view(-1, c, w))                                          # (B*H) * W * W
-        M_left_to_right = self.softmax(score)
+        M_right_to_left_relaxed = M_Relax(M_right_to_left, num_pixels=2)
+        V_left = torch.bmm(M_right_to_left_relaxed.contiguous().view(-1, w).unsqueeze(1),
+                           M_left_to_right.permute(0, 2, 1).contiguous().view(-1, w).unsqueeze(2)
+                           ).detach().contiguous().view(b, 1, h, w)  # (B*H*Wr) * Wl * 1
+        M_left_to_right_relaxed = M_Relax(M_left_to_right, num_pixels=2)
+        V_right = torch.bmm(M_left_to_right_relaxed.contiguous().view(-1, w).unsqueeze(1),  # (B*H*Wl) * 1 * Wr
+                            M_right_to_left.permute(0, 2, 1).contiguous().view(-1, w).unsqueeze(2)
+                                  ).detach().contiguous().view(b, 1, h, w)   # (B*H*Wr) * Wl * 1
 
-        ### valid masks
-        V_left_to_right = torch.sum(M_left_to_right.detach(), 1) > 0.1
-        V_left_to_right = V_left_to_right.contiguous().view(b, 1, h, w)                                          #  B * 1 * H * W
-        V_left_to_right = self.morphologic_process(V_left_to_right)
+        V_left_tanh = torch.tanh(5 * V_left)
+        V_right_tanh = torch.tanh(5 * V_right)
 
-        V_right_to_left = torch.sum(M_right_to_left.detach(), 1) > 0.1
-        V_right_to_left = V_right_to_left.contiguous().view(b, 1, h, w)                                      #  B * 1 * H * W
-        V_right_to_left = self.morphologic_process(V_right_to_left)
+        x_leftT = torch.bmm(M_right_to_left, x_right.permute(0, 2, 3, 1).contiguous().view(-1, w0, c0)
+                            ).contiguous().view(b, h0, w0, c0).permute(0, 3, 1, 2)                           #  B, C0, H0, W0
+        x_rightT = torch.bmm(M_left_to_right, x_left.permute(0, 2, 3, 1).contiguous().view(-1, w0, c0)
+                            ).contiguous().view(b, h0, w0, c0).permute(0, 3, 1, 2)                              #  B, C0, H0, W0
+        out_left = x_left * (1 - V_left_tanh.repeat(1, c0, 1, 1)) + x_leftT * V_left_tanh.repeat(1, c0, 1, 1)
+        out_right = x_right * (1 - V_right_tanh.repeat(1, c0, 1, 1)) +  x_rightT * V_right_tanh.repeat(1, c0, 1, 1)
 
-        M_left_right_left = torch.bmm(M_right_to_left, M_left_to_right)
-        M_right_left_right = torch.bmm(M_left_to_right, M_right_to_left)
-
-        ### fusion
-        buffer = self.b3(x_right).permute(0,2,3,1).contiguous().view(-1, w, c)                      # (B*H) * W * C
-        buffer = torch.bmm(M_right_to_left, buffer).contiguous().view(b, h, w, c).permute(0,3,1,2)  #  B * C * H * W
-        out = self.fusion(torch.cat((buffer, x_left, V_left_to_right), 1))
-
-        return out, \
-               (M_right_to_left.contiguous().view(b, h, w, w), M_left_to_right.contiguous().view(b, h, w, w)), \
-               (M_left_right_left.contiguous().view(b,h,w,w), M_right_left_right.contiguous().view(b,h,w,w)), \
-               (V_left_to_right, V_right_to_left)
+        return out_left, out_right, \
+               (M_right_to_left.contiguous().view(b, h, w, w), M_left_to_right.contiguous().view(b, h, w, w)),\
+               (V_left_tanh, V_right_tanh)
         
 
-class SwinPASSR(nn.Module):
+class SwiniPASSR(nn.Module):
 
     def __init__(self, img_size=64, patch_size=1, in_chans=3,
                  embed_dim=96, depths=[6, 6, 6, 6], num_heads=[6, 6, 6, 6],
@@ -706,7 +701,7 @@ class SwinPASSR(nn.Module):
                  norm_layer=nn.LayerNorm, ape=False, patch_norm=True,
                  use_checkpoint=False, upscale=2, img_range=1., upsampler='', resi_connection='1conv',
                  **kwargs):
-        super(SwinPASSR, self).__init__()
+        super(SwiniPASSR, self).__init__()
         num_in_ch = in_chans
         num_out_ch = in_chans
         num_feat = 64
@@ -757,9 +752,9 @@ class SwinPASSR(nn.Module):
         dpr = [x.item() for x in torch.linspace(0, drop_path_rate, sum(depths))]  # stochastic depth decay rule
 
         # build Residual Swin Transformer blocks (RSTB)
-        self.layers_before_pam = nn.ModuleList()
+        self.layers = nn.ModuleList()
         for i_layer in range(self.num_layers // 2):
-            self.layers_before_pam.append(RSTB(dim=embed_dim,
+            self.layers.append(RSTB(dim=embed_dim,
                                     input_resolution=(patches_resolution[0],
                                                       patches_resolution[1]),
                                     depth=depths[i_layer],
@@ -777,11 +772,43 @@ class SwinPASSR(nn.Module):
                                     resi_connection=resi_connection
                                     ))
         
-        self.norm_before_pam = norm_layer(self.num_features)
+        self.norm = norm_layer(self.num_features)
 
-        self.layers_after_pam = nn.ModuleList()
+        # build the last conv layer in deep feature extraction
+        if resi_connection == '1conv':
+            self.conv_after_body = nn.Conv2d(embed_dim, embed_dim, 3, 1, 1)
+        elif resi_connection == '3conv':
+            # to save parameters and memory
+            self.conv_after_body = nn.Sequential(nn.Conv2d(embed_dim, embed_dim // 4, 3, 1, 1),
+                                                 nn.LeakyReLU(negative_slope=0.2, inplace=True),
+                                                 nn.Conv2d(embed_dim // 4, embed_dim // 4, 1, 1, 0),
+                                                 nn.LeakyReLU(negative_slope=0.2, inplace=True),
+                                                 nn.Conv2d(embed_dim // 4, embed_dim, 3, 1, 1))
+
+        #####################################################################################################
+        ################################ 3, parallax attention module ################################
+        # for p in self.parameters():
+        #     p.requires_grad = False
+
+        self.pam = ParallaxAttentionModule(embed_dim, 1)
+        
+        self.fusion = nn.Sequential(
+            nn.Conv2d(2 * embed_dim, embed_dim, kernel_size=1, stride=1, padding=0, bias=True),
+            nn.LeakyReLU(0.1, inplace=True))
+
+        #####################################################################################################
+        ################################ 4, deep feature extraction 2 ################################
+        self.second_patch_embed = PatchEmbed(
+            img_size=img_size, patch_size=patch_size, in_chans=embed_dim, embed_dim=embed_dim,
+            norm_layer=norm_layer if self.patch_norm else None)
+        
+        self.second_patch_unembed = PatchUnEmbed(
+            img_size=img_size, patch_size=patch_size, in_chans=embed_dim, embed_dim=embed_dim,
+            norm_layer=norm_layer if self.patch_norm else None)
+        
+        self.second_layers = nn.ModuleList()
         for i_layer in range(self.num_layers // 2):
-            self.layers_after_pam.append(RSTB(dim=embed_dim,
+            self.second_layers.append(RSTB(dim=embed_dim,
                                     input_resolution=(patches_resolution[0],
                                                       patches_resolution[1]),
                                     depth=depths[i_layer],
@@ -799,27 +826,21 @@ class SwinPASSR(nn.Module):
                                     resi_connection=resi_connection
                                     ))
 
-        self.norm_after_pam = norm_layer(self.num_features)
+        self.second_norm = norm_layer(self.num_features)
 
         # build the last conv layer in deep feature extraction
         if resi_connection == '1conv':
-            self.conv_after_body = nn.Conv2d(embed_dim, embed_dim, 3, 1, 1)
+            self.second_conv_after_body = nn.Conv2d(embed_dim, embed_dim, 3, 1, 1)
         elif resi_connection == '3conv':
             # to save parameters and memory
-            self.conv_after_body = nn.Sequential(nn.Conv2d(embed_dim, embed_dim // 4, 3, 1, 1),
-                                                 nn.LeakyReLU(negative_slope=0.2, inplace=True),
-                                                 nn.Conv2d(embed_dim // 4, embed_dim // 4, 1, 1, 0),
-                                                 nn.LeakyReLU(negative_slope=0.2, inplace=True),
-                                                 nn.Conv2d(embed_dim // 4, embed_dim, 3, 1, 1))
+            self.second_conv_after_body = nn.Sequential(nn.Conv2d(embed_dim, embed_dim // 4, 3, 1, 1),
+                                                        nn.LeakyReLU(negative_slope=0.2, inplace=True),
+                                                        nn.Conv2d(embed_dim // 4, embed_dim // 4, 1, 1, 0),
+                                                        nn.LeakyReLU(negative_slope=0.2, inplace=True),
+                                                        nn.Conv2d(embed_dim // 4, embed_dim, 3, 1, 1))
 
         #####################################################################################################
-        ################################ 3, parallax attention module ################################
-        # for p in self.parameters():
-        #     p.requires_grad = False
-        self.pam = ParallaxAttentionModule(embed_dim)
-
-        #####################################################################################################
-        ################################ 4, high quality image reconstruction ################################
+        ################################ 5, high quality image reconstruction ################################
         if self.upsampler == 'pixelshuffle':
             # for classical SR
             self.conv_before_upsample = nn.Sequential(nn.Conv2d(embed_dim, num_feat, 3, 1, 1),
@@ -846,7 +867,6 @@ class SwinPASSR(nn.Module):
 
         self.apply(self._init_weights)
 
-
     def _init_weights(self, m):
         if isinstance(m, nn.Linear):
             trunc_normal_(m.weight, std=.02)
@@ -871,48 +891,63 @@ class SwinPASSR(nn.Module):
         x = F.pad(x, (0, mod_pad_w, 0, mod_pad_h), 'reflect')
         return x
 
-    def forward_features(self, x, tag='before'):
+    def forward_features(self, x, second=False):
         x_size = (x.shape[2], x.shape[3])
-        x = self.patch_embed(x)
+        x = self.second_patch_embed(x) if second else self.patch_embed(x)
+
         if self.ape:
             x = x + self.absolute_pos_embed
         x = self.pos_drop(x)
 
-        if tag == 'before':
-            for layer in self.layers_before_pam:
-                x = layer(x, x_size)
+        layers = self.second_layers if second else self.layers
+        for layer in layers:
+            x = layer(x, x_size)
 
-            x = self.norm_before_pam(x)  # B L C
-        else:
-            for layer in self.layers_after_pam:
-                x = layer(x, x_size)
-
-            x = self.norm_after_pam(x)  # B L C
-        
-        x = self.patch_unembed(x, x_size)
+        x = self.second_norm(x) if second else self.norm(x)
+        x = self.second_patch_unembed(x, x_size) if second else self.patch_unembed(x, x_size)
 
         return x
 
     def forward(self, x_left, x_right):
+
         H, W = x_left.shape[2:]
         x_left = self.check_image_size(x_left)
         x_right = self.check_image_size(x_right)
 
         self.mean = self.mean.type_as(x_left)
-        x_left = (x_left- self.mean) * self.img_range
-        x_right = (x_right- self.mean) * self.img_range
+        x_left = (x_left - self.mean) * self.img_range
+        x_right = (x_right - self.mean) * self.img_range
 
         if self.upsampler == 'pixelshuffle':
             # for classical SR
-            first_x_left, first_x_right = self.conv_first(x_left), self.conv_first(x_right)
-            x_left, x_right = self.forward_features(first_x_left, tag='before'), self.forward_features(first_x_right, tag='before')
-            x, (M_right_to_left, M_left_to_right), (M_left_right_left, M_right_left_right), (V_left_to_right, V_right_to_left) = self.pam(x_left, x_right)
-            x = self.conv_after_body(self.forward_features(x, tag='after')) + first_x_left
-            x = self.conv_before_upsample(x)
-            x = self.conv_last(self.upsample(x))
+            x_left_upscale = torch.nn.functional.interpolate(x_left, scale_factor=self.upscale, 
+                                                             mode='bicubic', align_corners=False, 
+                                                             recompute_scale_factor=True)
+            x_right_upscale = torch.nn.functional.interpolate(x_right, scale_factor=self.upscale, 
+                                                              mode='bicubic', align_corners=False, 
+                                                              recompute_scale_factor=True)
+
+            first_x_left = self.conv_first(x_left)
+            catfea_left = self.forward_features(first_x_left)
+            x_left = self.conv_after_body(catfea_left)
+
+            first_x_right = self.conv_first(x_right)
+            catfea_right = self.forward_features(first_x_right)
+            x_right = self.conv_after_body(catfea_right)
+
+            x_leftT, x_rightT, (M_right_to_left, M_left_to_right), (V_left, V_right) = self.pam(x_left, x_right, catfea_left, catfea_right)
+
+            second_catfea_left = self.forward_features(self.fusion(torch.cat([x_left, x_leftT], dim=1)), second=True)
+            x_left = self.conv_before_upsample(self.second_conv_after_body(second_catfea_left) + first_x_left)
+            x_left = self.conv_last(self.upsample(x_left)) + x_left_upscale
+            x_left = x_left / self.img_range + self.mean
+
+            second_catfea_right = self.forward_features(self.fusion(torch.cat([x_right, x_rightT], dim=1)), second=True)
+            x_right = self.conv_before_upsample(self.second_conv_after_body(second_catfea_right) + first_x_right)
+            x_right = self.conv_last(self.upsample(x_right)) + x_right_upscale
+            x_right = x_right / self.img_range + self.mean
             
-            x = x / self.img_range + self.mean
-            return x[:, :, :H*self.upscale, :W*self.upscale], (M_right_to_left, M_left_to_right), (M_left_right_left, M_right_left_right), (V_left_to_right, V_right_to_left)
+            return x_left[:, :, :H*self.upscale, :W*self.upscale], x_right[:, :, :H*self.upscale, :W*self.upscale], (M_right_to_left, M_left_to_right), (V_left, V_right)
         else:
             raise NotImplementedError('Upsampler [{:s}] is not defined.'.format(self.upsampler))
 
@@ -933,9 +968,9 @@ if __name__ == '__main__':
     window_size = 8
     height = (1024 // upscale // window_size + 1) * window_size
     width = (720 // upscale // window_size + 1) * window_size
-    model = SwinPASSR(upscale=2, img_size=(height, width),
-                   window_size=window_size, img_range=1., depths=[6, 6, 6, 6],
-                   embed_dim=60, num_heads=[6, 6, 6, 6], mlp_ratio=2, upsampler='pixelshuffle')
+    model = SwiniPASSR(upscale=2, img_size=(height, width),
+                       window_size=window_size, img_range=1., depths=[6, 6, 6, 6, 6, 6],
+                       embed_dim=60, num_heads=[6, 6, 6, 6, 6, 6], mlp_ratio=2, upsampler='pixelshuffle')
     # print(model)
     # print(height, width, model.flops() / 1e9)
 

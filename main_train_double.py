@@ -119,8 +119,9 @@ def main(json_path=None):
             if current_step % (opt['repeat_step'] * opt['train']['checkpoint_print']) == 0 and opt['rank'] == 0:
                 logs = model.current_log()
                 message = '[Train] [{:s}] iter: {:d}, lr:{:.3e}, '.format(opt['netG']['net_type'], current_step // opt['repeat_step'], model.current_learning_rate())
-                for k, v in logs.items():
-                    message += '{:s}: {:.3e} '.format(k, v)
+                for k in ['loss_sr', 'loss_photo', 'loss_smooth', 'loss_cycle', 'loss_cons', 'G_loss']:
+                    message += '{:s}: {:.3e} '.format(k, sum(logs[k]) / len(logs[k]))
+                    logs[k] = []
                 logger.info(message)
             
             if current_step % (opt['repeat_step'] * opt['train']['checkpoint_save']) == 0 and opt['rank'] == 0:
@@ -132,18 +133,20 @@ def main(json_path=None):
                 idx, avg_psnr = 0, 0.0
 
                 for test_data in test_loader:
-                    for swap in [False, True]:
-                        idx += 1
-                        model.feed_data(test_data, swap=swap)
-                        model.test()
+                        
+                    idx += 1
+                    model.feed_data(test_data)
+                    model.test()
 
-                        visuals = model.current_visuals()
-                        E_img = util.tensor2uint(visuals['E'])
-                        H_img = util.tensor2uint(visuals['H'])
+                    visuals = model.current_visuals()
+                    EL_img = util.tensor2uint(visuals['EL'])
+                    HL_img = util.tensor2uint(visuals['HL'])
+                    ER_img = util.tensor2uint(visuals['ER'])
+                    HR_img = util.tensor2uint(visuals['HR'])
 
-                        current_psnr = util.calculate_psnr(E_img, H_img, border=border)
+                    current_psnr = 0.5 * (util.calculate_psnr(EL_img, HL_img, border=border) + util.calculate_psnr(ER_img, HR_img, border=border))
 
-                        avg_psnr += current_psnr
+                    avg_psnr += current_psnr
 
                 avg_psnr = avg_psnr / idx
                 logger.info('[Validation] iter:{:d}, Average PSNR : {:<.2f}dB\n'.format(current_step // opt['repeat_step'], avg_psnr))
