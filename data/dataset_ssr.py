@@ -105,9 +105,9 @@ class DatasetSSR(data.Dataset):
             img_L_Right, img_H_Right = util.augment_img(img_L_Right, mode=mode), util.augment_img(img_H_Right, mode=mode)
 
             # RGB Prem
-            perm = np.random.permutation(3)
-            img_L_Left, img_H_Left = img_L_Left[:,:,perm], img_H_Left[:,:,perm]
-            img_L_Right, img_H_Right = img_L_Right[:,:,perm], img_H_Right[:,:,perm]
+            # perm = np.random.permutation(3)
+            # img_L_Left, img_H_Left = img_L_Left[:,:,perm], img_H_Left[:,:,perm]
+            # img_L_Right, img_H_Right = img_L_Right[:,:,perm], img_H_Right[:,:,perm]
 
         # ------------------------------------
         # L/H pairs, HWC to CHW, numpy to tensor

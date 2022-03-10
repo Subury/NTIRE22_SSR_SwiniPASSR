@@ -648,8 +648,8 @@ class ParallaxAttentionModule(nn.Module):
 
     def __init__(self, channels, layers):
         super(ParallaxAttentionModule, self).__init__()
-        self.bq = nn.Conv2d(layers * channels, channels, 1, 1, 0, groups=layers, bias=True)
-        self.bs = nn.Conv2d(layers * channels, channels, 1, 1, 0, groups=layers, bias=True)
+        self.bq = nn.Conv2d(layers * channels, channels, 3, 1, 1, groups=layers, bias=True)
+        self.bs = nn.Conv2d(layers * channels, channels, 3, 1, 1, groups=layers, bias=True)
         self.softmax = nn.Softmax(-1)
         self.rb = ResB(layers * channels)
         self.bn = nn.BatchNorm2d(layers * channels)
@@ -793,7 +793,7 @@ class SwiniPASSR(nn.Module):
         self.pam = ParallaxAttentionModule(embed_dim, 1)
         
         self.fusion = nn.Sequential(
-            nn.Conv2d(2 * embed_dim, embed_dim, kernel_size=1, stride=1, padding=0, bias=True),
+            nn.Conv2d(2 * embed_dim, embed_dim, kernel_size=3, stride=1, padding=1, bias=True),
             nn.LeakyReLU(0.1, inplace=True))
 
         #####################################################################################################

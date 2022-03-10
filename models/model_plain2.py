@@ -174,7 +174,7 @@ class ModelPlain2(ModelBase):
             loss_cons = self.G_lossfn(SR_left_res * self.V_left.repeat(1, 3, 1, 1), SR_left_resT * self.V_left.repeat(1, 3, 1, 1)) + \
                         self.G_lossfn(SR_right_res * self.V_right.repeat(1, 3, 1, 1), SR_right_resT * self.V_right.repeat(1, 3, 1, 1))
 
-            G_loss = loss_sr + 0.1 * loss_photo + 0.1 * (loss_smooth + loss_cycle + loss_cons)
+            G_loss = loss_sr + 0.1 * loss_photo + 0.01 * loss_smooth + 0.01 * loss_cycle + 0.01 * loss_cons
             G_loss.backward()
 
         if current_step % self.opt['repeat_step'] == 0:

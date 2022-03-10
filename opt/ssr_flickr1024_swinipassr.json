@@ -48,7 +48,7 @@
       , "num_heads": [9, 9, 9, 9, 9, 9]
       , "mlp_ratio": 2 
       , "upsampler": "pixelshuffle"
-      , "resi_connection": "3conv"
+      , "resi_connection": "1conv"
   
       , "init_type": "default"
     }
@@ -60,7 +60,7 @@
       , "E_decay": 0.0
   
       , "G_optimizer_type": "adam"
-      , "G_optimizer_lr": 1e-4
+      , "G_optimizer_lr": 2e-4
       , "G_optimizer_wd": 0
       , "G_optimizer_clipgrad": null
       , "G_optimizer_reuse": true
