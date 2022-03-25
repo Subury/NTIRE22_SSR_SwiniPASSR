@@ -49,7 +49,7 @@
 
 比赛结果复现流程：
 
->     1. mkdir ./final_models
+>     1. mkdir ./final_models & mkdir ./pretrained & mkdir ./superresolution & mkdir ./logits
 >     2. rm -rf ./pretrained/* & rm -rf ./superresolution/*  (必须执行)
 >     3. 修改 ./opt/sr_flickr1024_swinir.json, ./opt/ssr_flickr1024_swinipassr.json, ./opt/ssr_flickr1024_swinipassr_plus.json
          ```
