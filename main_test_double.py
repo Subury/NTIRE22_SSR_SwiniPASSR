@@ -1,4 +1,5 @@
 import argparse
+from re import T
 import cv2
 import glob
 import numpy as np
@@ -47,6 +48,7 @@ def main():
 
     # setup folder and path
     folder, save_dir, border, window_size = setup(args)
+    save_dir = save_dir + '_' + args.model_path.split('/')[-1].split('.')[0]
     os.makedirs(save_dir, exist_ok=True)
     test_results = OrderedDict()
     test_results['psnr'] = []
@@ -55,20 +57,20 @@ def main():
     test_results['ssim_y'] = []
     test_results['psnr_b'] = []
     psnr, ssim, psnr_y, ssim_y, psnr_b = 0, 0, 0, 0, 0
+    validation = True if (args.folder_gt is not None) else False
 
     output_logits = {}
-
     for idx, path in enumerate(sorted(glob.glob(os.path.join(folder, '*')))):
         output_result = None
 
-        # image augmentation + rgb augmentation
-        aumentation_modes = range(0, 8, 2)
-        aumentation_rgbs = [([0,1,2],[0,1,2]), ([1,2,0], [2,0,1]), ([2,0,1], [1, 2, 0]), ([0,2,1], [0, 2, 1]), ([2,1,0], [2,1,0]), ([1,0,2], [1,0,2])]
+        aumentation_modes = range(0, 1, 2)
+        aumentation_rgbs = [([0, 1, 2],[0, 1, 2])]
+        # aumentation_rgbs = [([0,1,2],[0,1,2]), ([1,2,0], [2,0,1]), ([2,0,1], [1, 2, 0]), ([0,2,1], [0, 2, 1]), ([2,1,0], [2,1,0]), ([1,0,2], [1,0,2])]
 
         for aumentation_rgb in aumentation_rgbs:
             for aumentation_mode in aumentation_modes:
                 # read image
-                imgname, left_img_lq, right_img_lq, img_gt = get_image_pair(args, path, mode=aumentation_mode)  # image to HWC-BGR, float32
+                imgname, left_img_lq, right_img_lq, img_gt = get_image_pair(args, path, mode=aumentation_mode, validation=validation)  # image to HWC-BGR, float32
                 left_img_lq = np.transpose(left_img_lq if left_img_lq.shape[2] == 1 else left_img_lq[:, :, aumentation_rgb[0]][:, :, [2, 1, 0]], (2, 0, 1))  # HCW-BGR to CHW-RGB
                 left_img_lq = torch.from_numpy(left_img_lq).float().unsqueeze(0).to(device)  # CHW-RGB to NCHW-RGB
                 right_img_lq = np.transpose(right_img_lq if right_img_lq.shape[2] == 1 else right_img_lq[:, :, aumentation_rgb[0]][:, :, [2, 1, 0]], (2, 0, 1))  # HCW-BGR to CHW-RGB
@@ -97,21 +99,21 @@ def main():
 
                 # augmentation processing
                 if aumentation_mode == 0:
-                    output, img_gt = output, img_gt
+                    output, img_gt = output, img_gt if validation else None
                 elif aumentation_mode == 1:
-                    output, img_gt = np.rot90(np.flipud(output), k=3), np.rot90(np.flipud(img_gt), k=3)
+                    output, img_gt = np.rot90(np.flipud(output), k=3), np.rot90(np.flipud(img_gt), k=3) if validation else None
                 elif aumentation_mode == 2:
-                    output, img_gt = np.flipud(output), np.flipud(img_gt)
+                    output, img_gt = np.flipud(output), np.flipud(img_gt) if validation else None
                 elif aumentation_mode == 3:
-                    output, img_gt = np.rot90(output), np.rot90(img_gt)
+                    output, img_gt = np.rot90(output), np.rot90(img_gt) if validation else None
                 elif aumentation_mode == 4:
-                    output, img_gt = np.rot90(np.flipud(output), k=2), np.rot90(np.flipud(img_gt), k=2)
+                    output, img_gt = np.rot90(np.flipud(output), k=2), np.rot90(np.flipud(img_gt), k=2) if validation else None
                 elif aumentation_mode == 5:
-                    output, img_gt = np.rot90(output, k=3), np.rot90(img_gt, k=3)
+                    output, img_gt = np.rot90(output, k=3), np.rot90(img_gt, k=3) if validation else None
                 elif aumentation_mode == 6:
-                    output, img_gt = np.rot90(output, k=2), np.rot90(img_gt, k=2)
+                    output, img_gt = np.rot90(output, k=2), np.rot90(img_gt, k=2) if validation else None
                 elif aumentation_mode == 7:
-                    output, img_gt = np.rot90(np.flipud(output), k=1), np.rot90(np.flipud(img_gt), k=1)
+                    output, img_gt = np.rot90(np.flipud(output), k=1), np.rot90(np.flipud(img_gt), k=1) if validation else None
 
                 if output_result is not None:
                     output_result += output
@@ -121,20 +123,19 @@ def main():
         output = output_result / (len(aumentation_modes) * len(aumentation_rgbs))
         output_logits[imgname] = output
         output = (output * 255.0).round().astype(np.uint8)  # float32 to uint8
-        cv2.imwrite(f'{save_dir}/{imgname}.png', output)
 
         # evaluate psnr/ssim/psnr_b
         if img_gt is not None:
             img_gt = (img_gt * 255.0).round().astype(np.uint8)  # float32 to uint8
             img_gt = np.squeeze(img_gt)
             
-            psnr = util.calculate_psnr(output, img_gt, crop_border=border)
-            ssim = util.calculate_ssim(output, img_gt, crop_border=border)
+            psnr = util.calculate_psnr(output, img_gt, crop_border=0)
+            ssim = util.calculate_ssim(output, img_gt, crop_border=0)
             test_results['psnr'].append(psnr)
             test_results['ssim'].append(ssim)
             if img_gt.ndim == 3:  # RGB image
-                psnr_y = util.calculate_psnr(output, img_gt, crop_border=border, test_y_channel=True)
-                ssim_y = util.calculate_ssim(output, img_gt, crop_border=border, test_y_channel=True)
+                psnr_y = util.calculate_psnr(output, img_gt, crop_border=0, test_y_channel=True)
+                ssim_y = util.calculate_ssim(output, img_gt, crop_border=0, test_y_channel=True)
                 test_results['psnr_y'].append(psnr_y)
                 test_results['ssim_y'].append(ssim_y)
             if args.task in ['jpeg_car']:
@@ -160,15 +161,20 @@ def main():
             ave_psnr_b = sum(test_results['psnr_b']) / len(test_results['psnr_b'])
             print('-- Average PSNR_B: {:.4f} dB'.format(ave_psnr_b))
 
-    torch.save(output_logits, './logits_' + args.model_path.split('/')[-1])
-
+    torch.save(output_logits, './logits/' + args.model_path.split('/')[-1])
 
 def define_model(args):
     # 001 classical image sr
     if args.task == 'classical_sr':
-        model = net(upscale=args.scale, in_chans=3, img_size=args.training_patch_size, window_size=8,
-                    img_range=1.0, depths=[9, 9, 9, 9, 9, 9], embed_dim=180, num_heads=[9, 9, 9, 9, 9, 9],
-                    mlp_ratio=2, upsampler="pixelshuffle", resi_connection="1conv")
+        if args.model_path.split("/")[-1].split(".")[0] == "P24W12D9E180H9":
+            model = net(upscale=args.scale, in_chans=3, img_size=args.training_patch_size, window_size=12,
+                        img_range=1.0, depths=[9, 9, 9, 9, 9, 9], embed_dim=180, num_heads=[9, 9, 9, 9, 9, 9],
+                        mlp_ratio=2, upsampler="pixelshuffle", resi_connection="1conv")
+        if args.model_path.split("/")[-1].split(".")[0] == "P24W8D9E180H9":
+            model = net(upscale=args.scale, in_chans=3, img_size=args.training_patch_size, window_size=8,
+                        img_range=1.0, depths=[9, 9, 9, 9, 9, 9], embed_dim=180, num_heads=[9, 9, 9, 9, 9, 9],
+                        mlp_ratio=2, upsampler="pixelshuffle", resi_connection="1conv")
+                                                
         param_key_g = 'params'
 
     # 002 lightweight image sr
@@ -227,7 +233,7 @@ def setup(args):
     # 001 classical image sr/ 002 lightweight image sr
     if args.task in ['classical_sr', 'lightweight_sr']:
         save_dir = f'results/swinir_{args.task}_x{args.scale}'
-        folder = args.folder_gt
+        folder = args.folder_lq
         border = args.scale
         window_size = 8
 
@@ -257,12 +263,12 @@ def setup(args):
     return folder, save_dir, border, window_size
 
 
-def get_image_pair(args, path, mode=0):
+def get_image_pair(args, path, mode=0, validation=True):
     (imgname, imgext) = os.path.splitext(os.path.basename(path))
 
     # 001 classical image sr/ 002 lightweight image sr (load lq-gt image pairs)
     if args.task in ['classical_sr', 'lightweight_sr']:
-        img_gt = cv2.imread(path, cv2.IMREAD_COLOR).astype(np.float32) / 255.
+        img_gt = cv2.imread(f'{args.folder_gt}/{imgname}{imgext}', cv2.IMREAD_COLOR).astype(np.float32) / 255. if validation else None
         if 'L.png' in path:
             left_img_lq = cv2.imread(f'{args.folder_lq}/{imgname}{imgext}', cv2.IMREAD_COLOR).astype(np.float32) / 255.
             right_img_lq = cv2.imread(f'{args.folder_lq}/{imgname}{imgext}'.replace('L.png', 'R.png'), cv2.IMREAD_COLOR).astype(np.float32) / 255.
@@ -300,21 +306,21 @@ def get_image_pair(args, path, mode=0):
         img_lq = np.expand_dims(img_lq, axis=2).astype(np.float32) / 255.
 
     if mode == 0:
-        return imgname, left_img_lq, right_img_lq, img_gt
+        return imgname, left_img_lq, right_img_lq, img_gt if validation else None
     elif mode == 1:
-        return imgname, np.flipud(np.rot90(left_img_lq)), np.flipud(np.rot90(right_img_lq)),np.flipud(np.rot90(img_gt))
+        return imgname, np.flipud(np.rot90(left_img_lq)), np.flipud(np.rot90(right_img_lq)),np.flipud(np.rot90(img_gt)) if validation else None
     elif mode == 2:
-        return imgname, np.flipud(left_img_lq), np.flipud(right_img_lq), np.flipud(img_gt)
+        return imgname, np.flipud(left_img_lq), np.flipud(right_img_lq), np.flipud(img_gt) if validation else None
     elif mode == 3:
-        return imgname, np.rot90(left_img_lq, k=3), np.rot90(right_img_lq, k=3), np.rot90(img_gt, k=3)
+        return imgname, np.rot90(left_img_lq, k=3), np.rot90(right_img_lq, k=3), np.rot90(img_gt, k=3) if validation else None
     elif mode == 4:
-        return imgname, np.flipud(np.rot90(left_img_lq, k=2)), np.flipud(np.rot90(right_img_lq, k=2)), np.flipud(np.rot90(img_gt, k=2))
+        return imgname, np.flipud(np.rot90(left_img_lq, k=2)), np.flipud(np.rot90(right_img_lq, k=2)), np.flipud(np.rot90(img_gt, k=2)) if validation else None
     elif mode == 5:
-        return imgname, np.rot90(left_img_lq), np.rot90(right_img_lq), np.rot90(img_gt)
+        return imgname, np.rot90(left_img_lq), np.rot90(right_img_lq), np.rot90(img_gt) if validation else None
     elif mode == 6:
-        return imgname, np.rot90(left_img_lq, k=2), np.rot90(right_img_lq, k=2), np.rot90(img_gt, k=2)
+        return imgname, np.rot90(left_img_lq, k=2), np.rot90(right_img_lq, k=2), np.rot90(img_gt, k=2) if validation else None
     elif mode == 7:
-        return imgname, np.flipud(np.rot90(left_img_lq, k=3)), np.flipud(np.rot90(right_img_lq, k=3)), np.flipud(np.rot90(img_gt, k=3))
+        return imgname, np.flipud(np.rot90(left_img_lq, k=3)), np.flipud(np.rot90(right_img_lq, k=3)), np.flipud(np.rot90(img_gt, k=3)) if validation else None
 
 
 def test(left_img_lq, right_img_lq, model, args, window_size):

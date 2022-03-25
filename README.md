@@ -50,7 +50,7 @@
 比赛结果复现流程：
 
 >     1. mkdir ./final_models
->     2. rm -rf ./pretrained/* & rm -rf ./superresolution/*  
+>     2. rm -rf ./pretrained/* & rm -rf ./superresolution/*  (必须执行)
 >     3. 修改 ./opt/sr_flickr1024_swinir.json, ./opt/ssr_flickr1024_swinipassr.json, ./opt/ssr_flickr1024_swinipassr_plus.json
          ```
          ...
@@ -65,8 +65,9 @@
          ```
 >     4. 执行训练流程
 >     5. mv /pretrained/swinipassr_final.pth ./final_models/P24W12D9E180H9.pth
->     6. rm -rf ./pretrained/* & rm -rf ./superresolution/*  
->     7. 修改 ./opt/sr_flickr1024_swinir.json, ./opt/ssr_flickr1024_swinipassr.json, ./opt/ssr_flickr1024_swinipassr_plus.json
+>     6. python main_test_double.py --task classical_sr --scale 4 --training_patch_size 24 --model_path ./final_models/P24W12D9E180H9.pth --folder_lq test_path
+>     7. rm -rf ./pretrained/* & rm -rf ./superresolution/*  （必须执行）
+>     8. 修改 ./opt/sr_flickr1024_swinir.json, ./opt/ssr_flickr1024_swinipassr.json, ./opt/ssr_flickr1024_swinipassr_plus.json
          ```
          ...
          , "H_size": 96
@@ -78,7 +79,11 @@
          , "embed_dim": 180 
          , "num_heads": [9, 9, 9, 9, 9, 9] 
          ```
->     8. 执行训练流程
->     9. mv /pretrained/swinipassr_final.pth ./final_models/P24W8D9E180H9.pth
+>     9. 执行训练流程
+>     10. mv /pretrained/swinipassr_final.pth ./final_models/P24W8D9E180H9.pth
 
       ...
+
+>     python logits_to_images.py --folder_lq test_path
+
+>     zip ./results.zip ./results/swinir_classical_sr_x4/*.png
