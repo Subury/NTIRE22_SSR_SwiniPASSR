@@ -1,11 +1,12 @@
 {
-    "task": "sr_flickr1024_swinir"
-    , "model": "plain"
+    "task": "ssr_flickr1024_swinipassr_plus"
+    , "model": "plain2"
     , "gpu_ids": [0, 1]
     , "dist": true
   
     , "scale": 4
     , "n_channels": 3
+    , "repeat_step": 1
   
     , "path": {
       "root": "superresolution"
@@ -16,19 +17,19 @@
     , "datasets": {
       "train": {
         "name": "train_dataset"
-        , "dataset_type": "sr"
+        , "dataset_type": "ssr"
         , "dataroot_H": "/dataset/NTIRE2022_Stereo_Image_SSR/Train/HR"
         , "dataroot_L": "/dataset/NTIRE2022_Stereo_Image_SSR/Train/LR_x4"
   
         , "H_size": 96
   
         , "dataloader_shuffle": true
-        , "dataloader_num_workers": 16
-        , "dataloader_batch_size": 32
+        , "dataloader_num_workers": 8
+        , "dataloader_batch_size": 16
       }
       , "test": {
         "name": "test_dataset"
-        , "dataset_type": "sr"
+        , "dataset_type": "ssr"
         , "dataroot_H": "/dataset/NTIRE2022_Stereo_Image_SSR/Validation/HR"
         , "dataroot_L": "/dataset/NTIRE2022_Stereo_Image_SSR/Validation/LR_x4"
   
@@ -36,15 +37,15 @@
     }
   
     , "netG": {
-      "net_type": "swinir" 
+      "net_type": "swinipassr" 
       , "upscale": 4
       , "in_chans": 3 
       , "img_size": 24
-      , "window_size": 12
+      , "window_size": 8
       , "img_range": 1.0 
       , "depths": [9, 9, 9, 9, 9, 9] 
-      , "embed_dim": 180 
-      , "num_heads": [9, 9, 9, 9, 9, 9] 
+      , "embed_dim": 180
+      , "num_heads": [9, 9, 9, 9, 9, 9]
       , "mlp_ratio": 2 
       , "upsampler": "pixelshuffle"
       , "resi_connection": "1conv"
@@ -56,7 +57,7 @@
       "G_lossfn_type": "l1"
       , "G_lossfn_weight": 1.0
   
-      , "E_decay": 0.999
+      , "E_decay": 0.0
   
       , "G_optimizer_type": "adam"
       , "G_optimizer_lr": 2e-4
@@ -77,6 +78,8 @@
       , "checkpoint_test": 5000
       , "checkpoint_save": 5000
       , "checkpoint_print": 200
+      , "pretrained": "/workspace/sages/SSR/SwinSSR/pretrained/swinir_psnr_23.50.pth"
+      , "param_keys": []
     }
   }
   

@@ -2,6 +2,7 @@
 
 import math
 from nntplib import NNTP
+from re import S
 import torch
 import numpy as np
 import torch.nn as nn
@@ -692,7 +693,7 @@ class ParallaxAttentionModule(nn.Module):
                (V_left_tanh, V_right_tanh)
         
 
-class SwiniPASSR(nn.Module):
+class SwiniPAPSSR(nn.Module):
 
     def __init__(self, img_size=64, patch_size=1, in_chans=3,
                  embed_dim=96, depths=[6, 6, 6, 6], num_heads=[6, 6, 6, 6],
@@ -701,7 +702,7 @@ class SwiniPASSR(nn.Module):
                  norm_layer=nn.LayerNorm, ape=False, patch_norm=True,
                  use_checkpoint=False, upscale=2, img_range=1., upsampler='', resi_connection='1conv',
                  **kwargs):
-        super(SwiniPASSR, self).__init__()
+        super(SwiniPAPSSR, self).__init__()
         num_in_ch = in_chans
         num_out_ch = in_chans
         num_feat = 64
@@ -845,8 +846,10 @@ class SwiniPASSR(nn.Module):
             # for classical SR
             self.conv_before_upsample = nn.Sequential(nn.Conv2d(embed_dim, num_feat, 3, 1, 1),
                                                       nn.LeakyReLU(inplace=True))
-            self.upsample = Upsample(upscale, num_feat)
             self.dropout = nn.Dropout2d(0.5)
+            self.upsample_middle = Upsample(upscale // 2, num_feat)
+            self.conv_middle = nn.Conv2d(num_feat, num_out_ch, 3, 1, 1)
+            self.upsample_last = Upsample(upscale // 2, num_feat)
             self.conv_last = nn.Conv2d(num_feat, num_out_ch, 3, 1, 1)
         elif self.upsampler == 'pixelshuffledirect':
             # for lightweight SR (to save parameters)
@@ -921,6 +924,14 @@ class SwiniPASSR(nn.Module):
 
         if self.upsampler == 'pixelshuffle':
             # for classical SR
+
+            x_left_upscale_middle = torch.nn.functional.interpolate(x_left, scale_factor=self.upscale // 2, 
+                                                                    mode='bicubic', align_corners=False, 
+                                                                    recompute_scale_factor=True)
+            x_right_upscale_middle = torch.nn.functional.interpolate(x_right, scale_factor=self.upscale // 2, 
+                                                                     mode='bicubic', align_corners=False, 
+                                                                     recompute_scale_factor=True)
+
             x_left_upscale = torch.nn.functional.interpolate(x_left, scale_factor=self.upscale, 
                                                              mode='bicubic', align_corners=False, 
                                                              recompute_scale_factor=True)
@@ -940,15 +951,25 @@ class SwiniPASSR(nn.Module):
 
             second_catfea_left = self.forward_features(self.fusion(torch.cat([x_left, x_leftT], dim=1)), second=True)
             x_left = self.conv_before_upsample(self.second_conv_after_body(second_catfea_left) + first_x_left)
-            x_left = self.conv_last(self.dropout(self.upsample(x_left))) + x_left_upscale
+            
+            x_left_upsample_middle = self.upsample_middle(x_left)
+            x_left_middle = self.conv_middle(self.dropout(x_left_upsample_middle)) + x_left_upscale_middle
+            x_left_middle = x_left_middle / self.img_range + self.mean
+            x_left = self.conv_last(self.dropout(self.upsample_last(x_left_upsample_middle))) + x_left_upscale
             x_left = x_left / self.img_range + self.mean
+            
 
             second_catfea_right = self.forward_features(self.fusion(torch.cat([x_right, x_rightT], dim=1)), second=True)
             x_right = self.conv_before_upsample(self.second_conv_after_body(second_catfea_right) + first_x_right)
-            x_right = self.conv_last(self.dropout(self.upsample(x_right))) + x_right_upscale
+            
+            x_right_upsample_middle = self.upsample_middle(x_right)
+            x_right_middle = self.conv_middle(self.dropout(x_right_upsample_middle)) + x_right_upscale_middle
+            x_right_middle = x_right_middle / self.img_range + self.mean
+            x_right = self.conv_last(self.dropout(self.upsample_last(x_right_upsample_middle))) + x_right_upscale
             x_right = x_right / self.img_range + self.mean
             
-            return x_left[:, :, :H*self.upscale, :W*self.upscale], x_right[:, :, :H*self.upscale, :W*self.upscale], (M_right_to_left, M_left_to_right), (V_left, V_right)
+            return x_left[:, :, :H*self.upscale, :W*self.upscale], x_right[:, :, :H*self.upscale, :W*self.upscale], (M_right_to_left, M_left_to_right), (V_left, V_right), \
+                   x_left_middle[:, :, :H*self.upscale // 2, :W*self.upscale // 2], x_right_middle[:, :, :H*self.upscale // 2, :W*self.upscale // 2]
         else:
             raise NotImplementedError('Upsampler [{:s}] is not defined.'.format(self.upsampler))
 
@@ -969,12 +990,12 @@ if __name__ == '__main__':
     window_size = 8
     height = (1024 // upscale // window_size + 1) * window_size
     width = (720 // upscale // window_size + 1) * window_size
-    model = SwiniPASSR(upscale=2, img_size=(height, width),
-                       window_size=window_size, img_range=1., depths=[6, 6, 6, 6, 6, 6],
-                       embed_dim=60, num_heads=[6, 6, 6, 6, 6, 6], mlp_ratio=2, upsampler='pixelshuffle')
+    model = SwiniPAPSSR(upscale=4, img_size=(height, width),
+                        window_size=window_size, img_range=1., depths=[6, 6, 6, 6, 6, 6],
+                        embed_dim=60, num_heads=[6, 6, 6, 6, 6, 6], mlp_ratio=2, upsampler='pixelshuffle')
     # print(model)
     # print(height, width, model.flops() / 1e9)
 
     x = torch.randn((1, 3, height, width))
     x = model(x, x)
-    print(x[0].shape)
+    print(x[0].shape, x[1].shape, x[-2].shape, x[-1].shape)

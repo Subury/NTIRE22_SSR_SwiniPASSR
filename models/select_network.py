@@ -33,6 +33,19 @@ def define_G(opt):
                    mlp_ratio=opt_net['mlp_ratio'],
                    upsampler=opt_net['upsampler'],
                    resi_connection=opt_net['resi_connection'])
+    elif net_type == 'swinipapssr':
+        from models.network_swinipapssr import SwiniPAPSSR as net
+        netG = net(upscale=opt_net['upscale'],
+                   in_chans=opt_net['in_chans'],
+                   img_size=opt_net['img_size'],
+                   window_size=opt_net['window_size'],
+                   img_range=opt_net['img_range'],
+                   depths=opt_net['depths'],
+                   embed_dim=opt_net['embed_dim'],
+                   num_heads=opt_net['num_heads'],
+                   mlp_ratio=opt_net['mlp_ratio'],
+                   upsampler=opt_net['upsampler'],
+                   resi_connection=opt_net['resi_connection'])
     else:
         raise NotImplementedError('netG [{:s}] is not found.'.format(net_type))
     

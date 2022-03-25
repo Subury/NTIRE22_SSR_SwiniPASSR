@@ -13,10 +13,10 @@ from models.select_network import define_G
 from utils.utils_model import test_mode
 from utils.utils_regularizers import regularizer_orth, regularizer_clip
 
-class ModelPlain2(ModelBase):
+class ModelPlain2P(ModelBase):
 
     def __init__(self, opt):
-        super(ModelPlain2, self).__init__(opt)
+        super(ModelPlain2P, self).__init__(opt)
         # ------------------------------------
         # define network
         # ------------------------------------
@@ -40,15 +40,6 @@ class ModelPlain2(ModelBase):
         self.netG = self.model_to_device(self.netG)
         if self.opt_train['E_decay'] > 0:
             self.netE = define_G(opt).to(self.device).eval()
-        
-        # -------------------------------------
-        # setting loss weight
-        # -------------------------------------
-        self.weight_sr = self.opt['train']['weight_sr']
-        self.weight_photo = self.opt['train']['weight_photo']
-        self.weight_smooth = self.opt['train']['weight_smooth']
-        self.weight_cycle = self.opt['train']['weight_cycle']
-        self.weight_cons = self.opt['train']['weight_cons']
     
     def init_train(self):
         self.load()                           # load model
@@ -129,11 +120,14 @@ class ModelPlain2(ModelBase):
         self.L_Left, self.L_Right = data['L_Left'].to(self.device), data['L_Right'].to(self.device)
         if need_H:
             self.H_Left, self.H_Right = data['H_Left'].to(self.device), data['H_Right'].to(self.device)
+        
+        if 'M_Left' in data.keys() and 'M_Right' in data.keys():
+            self.M_Left, self.M_Right = data['M_Left'].to(self.device), data['M_Right'].to(self.device)
 
     def netG_forward(self):
         self.EL, self.ER, \
         (self.M_right_to_left, self.M_left_to_right), \
-        (self.V_left, self.V_right) = self.netG(self.L_Left, self.L_Right)
+        (self.V_left, self.V_right), self.ML, self.MR = self.netG(self.L_Left, self.L_Right)
 
     def optimize_parameters(self, current_step):
         
@@ -145,6 +139,7 @@ class ModelPlain2(ModelBase):
 
             ### SR Loss
             loss_sr = self.G_lossfn(self.EL, self.H_Left) + self.G_lossfn(self.ER, self.H_Right)
+            loss_sr += self.G_lossfn(self.ML, self.M_Left) + self.G_lossfn(self.MR, self.M_Right)
 
             ### Photometric Loss 
             Res_left = torch.abs(self.H_Left - F.interpolate(self.L_Left, scale_factor=4, mode='bicubic', align_corners=False, recompute_scale_factor=True))
@@ -157,6 +152,17 @@ class ModelPlain2(ModelBase):
                                    ).view(b, h, w, c).contiguous().permute(0, 3, 1, 2)
             loss_photo = self.G_lossfn(Res_left * self.V_left.repeat(1, 3, 1, 1), Res_leftT * self.V_left.repeat(1, 3, 1, 1)) + \
                          self.G_lossfn(Res_right * self.V_right.repeat(1, 3, 1, 1), Res_rightT * self.V_right.repeat(1, 3, 1, 1))
+            
+            middle_Res_left = torch.abs(self.M_Left - F.interpolate(self.L_Left, scale_factor=2, mode='bicubic', align_corners=False, recompute_scale_factor=True))
+            middle_Res_left = F.interpolate(middle_Res_left, scale_factor=0.5, mode='bicubic', align_corners=False, recompute_scale_factor=True)
+            middle_Res_right = torch.abs(self.M_Right - F.interpolate(self.L_Right, scale_factor=2, mode='bicubic', align_corners=False, recompute_scale_factor=True))
+            middle_Res_right = F.interpolate(middle_Res_right, scale_factor=0.5, mode='bicubic', align_corners=False, recompute_scale_factor=True)
+            middle_Res_leftT = torch.bmm(self.M_right_to_left.contiguous().view(b * h, w, w), middle_Res_right.permute(0, 2, 3, 1).contiguous().view(b * h, w, c)
+                                         ).view(b, h, w, c).contiguous().permute(0, 3, 1, 2)
+            middle_Res_rightT = torch.bmm(self.M_left_to_right.contiguous().view(b * h, w, w), middle_Res_left.permute(0, 2, 3, 1).contiguous().view(b * h, w, c)
+                                         ).view(b, h, w, c).contiguous().permute(0, 3, 1, 2)
+            loss_photo += self.G_lossfn(middle_Res_left * self.V_left.repeat(1, 3, 1, 1), middle_Res_leftT * self.V_left.repeat(1, 3, 1, 1)) + \
+                          self.G_lossfn(middle_Res_right * self.V_right.repeat(1, 3, 1, 1), middle_Res_rightT * self.V_right.repeat(1, 3, 1, 1))
 
             ### Smoothness Loss
             loss_h = self.G_lossfn(self.M_right_to_left[:, :-1, :, :], self.M_right_to_left[:, 1:, :, :]) + \
@@ -173,6 +179,13 @@ class ModelPlain2(ModelBase):
             loss_cycle = self.G_lossfn(Res_left * self.V_left.repeat(1, 3, 1, 1), Res_left_cycle * self.V_left.repeat(1, 3, 1, 1)) + \
                          self.G_lossfn(Res_right * self.V_right.repeat(1, 3, 1, 1), Res_right_cycle * self.V_right.repeat(1, 3, 1, 1))
 
+            middle_Res_left_cycle = torch.bmm(self.M_right_to_left.contiguous().view(b * h, w, w), middle_Res_rightT.permute(0, 2, 3, 1).contiguous().view(b * h, w, c)
+                                              ).view(b, h, w, c).contiguous().permute(0, 3, 1, 2)
+            middle_Res_right_cycle = torch.bmm(self.M_left_to_right.contiguous().view(b * h, w, w), middle_Res_leftT.permute(0, 2, 3, 1).contiguous().view(b * h, w, c)
+                                               ).view(b, h, w, c).contiguous().permute(0, 3, 1, 2)
+            loss_cycle += self.G_lossfn(middle_Res_left * self.V_left.repeat(1, 3, 1, 1), middle_Res_left_cycle * self.V_left.repeat(1, 3, 1, 1)) + \
+                          self.G_lossfn(middle_Res_right * self.V_right.repeat(1, 3, 1, 1), middle_Res_right_cycle * self.V_right.repeat(1, 3, 1, 1))
+
             ### Consistency Loss
             SR_left_res = F.interpolate(torch.abs(self.H_Left - self.EL), scale_factor=0.25, mode='bicubic', align_corners=False, recompute_scale_factor=True)
             SR_right_res = F.interpolate(torch.abs(self.H_Right - self.ER), scale_factor=0.25, mode='bicubic', align_corners=False, recompute_scale_factor=True)
@@ -182,6 +195,15 @@ class ModelPlain2(ModelBase):
                                       ).view(b, h, w, c).contiguous().permute(0, 3, 1, 2)
             loss_cons = self.G_lossfn(SR_left_res * self.V_left.repeat(1, 3, 1, 1), SR_left_resT * self.V_left.repeat(1, 3, 1, 1)) + \
                         self.G_lossfn(SR_right_res * self.V_right.repeat(1, 3, 1, 1), SR_right_resT * self.V_right.repeat(1, 3, 1, 1))
+            
+            middle_SR_left_res = F.interpolate(torch.abs(self.M_Left - self.ML), scale_factor=0.5, mode='bicubic', align_corners=False, recompute_scale_factor=True)
+            middle_SR_right_res = F.interpolate(torch.abs(self.M_Right - self.MR), scale_factor=0.5, mode='bicubic', align_corners=False, recompute_scale_factor=True)
+            middle_SR_left_resT = torch.bmm(self.M_right_to_left.detach().contiguous().view(b * h, w, w), middle_SR_right_res.permute(0, 2, 3, 1).contiguous().view(b * h, w, c)
+                                            ).view(b, h, w, c).contiguous().permute(0, 3, 1, 2)
+            middle_SR_right_resT = torch.bmm(self.M_left_to_right.detach().contiguous().view(b * h, w, w), middle_SR_left_res.permute(0, 2, 3, 1).contiguous().view(b * h, w, c)
+                                             ).view(b, h, w, c).contiguous().permute(0, 3, 1, 2)
+            loss_cons += self.G_lossfn(middle_SR_left_res * self.V_left.repeat(1, 3, 1, 1), middle_SR_left_resT * self.V_left.repeat(1, 3, 1, 1)) + \
+                         self.G_lossfn(middle_SR_right_res * self.V_right.repeat(1, 3, 1, 1), middle_SR_right_resT * self.V_right.repeat(1, 3, 1, 1))
 
             G_loss = loss_sr + 0.1 * loss_photo + 0.01 * loss_smooth + 0.01 * loss_cycle + 0.01 * loss_cons
             G_loss.backward()

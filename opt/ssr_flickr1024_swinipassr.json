@@ -57,7 +57,7 @@
       "G_lossfn_type": "l1"
       , "G_lossfn_weight": 1.0
   
-      , "E_decay": 0.0
+      , "E_decay": 0.999
   
       , "G_optimizer_type": "adam"
       , "G_optimizer_lr": 2e-4

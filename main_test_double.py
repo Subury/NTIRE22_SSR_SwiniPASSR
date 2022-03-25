@@ -50,69 +50,78 @@ def main():
     os.makedirs(save_dir, exist_ok=True)
     test_results = OrderedDict()
     test_results['psnr'] = []
-    test_results['ssim'] = []
-    test_results['psnr_y'] = []
+    test_results['ssim'] = []                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           
+    test_results['psnr_y'] = []                                                                       
     test_results['ssim_y'] = []
     test_results['psnr_b'] = []
     psnr, ssim, psnr_y, ssim_y, psnr_b = 0, 0, 0, 0, 0
 
+    output_logits = {}
+
     for idx, path in enumerate(sorted(glob.glob(os.path.join(folder, '*')))):
         output_result = None
-        for aumentation_mode in range(0, 8, 1):
-            # read image
-            imgname, left_img_lq, right_img_lq, img_gt = get_image_pair(args, path, mode=aumentation_mode)  # image to HWC-BGR, float32
-            left_img_lq = np.transpose(left_img_lq if left_img_lq.shape[2] == 1 else left_img_lq[:, :, [2, 1, 0]], (2, 0, 1))  # HCW-BGR to CHW-RGB
-            left_img_lq = torch.from_numpy(left_img_lq).float().unsqueeze(0).to(device)  # CHW-RGB to NCHW-RGB
-            right_img_lq = np.transpose(right_img_lq if right_img_lq.shape[2] == 1 else right_img_lq[:, :, [2, 1, 0]], (2, 0, 1))  # HCW-BGR to CHW-RGB
-            right_img_lq = torch.from_numpy(right_img_lq).float().unsqueeze(0).to(device)  # CHW-RGB to NCHW-RGB
 
-            # inference
-            with torch.no_grad():
-                # pad input image to be a multiple of window_size
-                _, _, h_old, w_old = left_img_lq.size()
-                h_pad = (h_old // window_size + 1) * window_size - h_old
-                w_pad = (w_old // window_size + 1) * window_size - w_old
-                left_img_lq = torch.cat([left_img_lq, torch.flip(left_img_lq, [2])], 2)[:, :, :h_old + h_pad, :]
-                left_img_lq = torch.cat([left_img_lq, torch.flip(left_img_lq, [3])], 3)[:, :, :, :w_old + w_pad]
-                right_img_lq = torch.cat([right_img_lq, torch.flip(right_img_lq, [2])], 2)[:, :, :h_old + h_pad, :]
-                right_img_lq = torch.cat([right_img_lq, torch.flip(right_img_lq, [3])], 3)[:, :, :, :w_old + w_pad]
-                output = test(left_img_lq, right_img_lq, model, args, window_size)
-                output = output[..., :h_old * args.scale, :w_old * args.scale]
+        # image augmentation + rgb augmentation
+        aumentation_modes = range(0, 8, 2)
+        aumentation_rgbs = [([0,1,2],[0,1,2]), ([1,2,0], [2,0,1]), ([2,0,1], [1, 2, 0]), ([0,2,1], [0, 2, 1]), ([2,1,0], [2,1,0]), ([1,0,2], [1,0,2])]
 
-            # save image
-            output = output.data.squeeze().float().cpu().clamp_(0, 1).numpy()
-            if output.ndim == 3:
-                output = np.transpose(output[[2, 1, 0], :, :], (1, 2, 0))  # CHW-RGB to HCW-BGR
+        for aumentation_rgb in aumentation_rgbs:
+            for aumentation_mode in aumentation_modes:
+                # read image
+                imgname, left_img_lq, right_img_lq, img_gt = get_image_pair(args, path, mode=aumentation_mode)  # image to HWC-BGR, float32
+                left_img_lq = np.transpose(left_img_lq if left_img_lq.shape[2] == 1 else left_img_lq[:, :, aumentation_rgb[0]][:, :, [2, 1, 0]], (2, 0, 1))  # HCW-BGR to CHW-RGB
+                left_img_lq = torch.from_numpy(left_img_lq).float().unsqueeze(0).to(device)  # CHW-RGB to NCHW-RGB
+                right_img_lq = np.transpose(right_img_lq if right_img_lq.shape[2] == 1 else right_img_lq[:, :, aumentation_rgb[0]][:, :, [2, 1, 0]], (2, 0, 1))  # HCW-BGR to CHW-RGB
+                right_img_lq = torch.from_numpy(right_img_lq).float().unsqueeze(0).to(device)  # CHW-RGB to NCHW-RGB
 
-            if img_gt is not None:
-                img_gt = img_gt[:h_old * args.scale, :w_old * args.scale, ...] # crop gt
+                # inference
+                with torch.no_grad():
+                    # pad input image to be a multiple of window_size
+                    _, _, h_old, w_old = left_img_lq.size()
+                    h_pad = (h_old // window_size + 1) * window_size - h_old
+                    w_pad = (w_old // window_size + 1) * window_size - w_old
+                    left_img_lq = torch.cat([left_img_lq, torch.flip(left_img_lq, [2])], 2)[:, :, :h_old + h_pad, :]
+                    left_img_lq = torch.cat([left_img_lq, torch.flip(left_img_lq, [3])], 3)[:, :, :, :w_old + w_pad]
+                    right_img_lq = torch.cat([right_img_lq, torch.flip(right_img_lq, [2])], 2)[:, :, :h_old + h_pad, :]
+                    right_img_lq = torch.cat([right_img_lq, torch.flip(right_img_lq, [3])], 3)[:, :, :, :w_old + w_pad]
+                    output = test(left_img_lq, right_img_lq, model, args, window_size)
+                    output = output[..., :h_old * args.scale, :w_old * args.scale]
 
-            # augmentation processing
-            if aumentation_mode == 0:
-                output, img_gt = output, img_gt
-            elif aumentation_mode == 1:
-                output, img_gt = np.rot90(np.flipud(output), k=3), np.rot90(np.flipud(img_gt), k=3)
-            elif aumentation_mode == 2:
-                output, img_gt = np.flipud(output), np.flipud(img_gt)
-            elif aumentation_mode == 3:
-                output, img_gt = np.rot90(output), np.rot90(img_gt)
-            elif aumentation_mode == 4:
-                output, img_gt = np.rot90(np.flipud(output), k=2), np.rot90(np.flipud(img_gt), k=2)
-            elif aumentation_mode == 5:
-                output, img_gt = np.rot90(output, k=3), np.rot90(img_gt, k=3)
-            elif aumentation_mode == 6:
-                output, img_gt = np.rot90(output, k=2), np.rot90(img_gt, k=2)
-            elif aumentation_mode == 7:
-                output, img_gt = np.rot90(np.flipud(output), k=1), np.rot90(np.flipud(img_gt), k=1)
+                # save image
+                output = output.data.squeeze().float().cpu().clamp_(0, 1).numpy()
+                if output.ndim == 3:
+                    output = np.transpose(output[[2, 1, 0], :, :], (1, 2, 0))[:, :, aumentation_rgb[1]]  # CHW-RGB to HCW-BGR
 
-            if output_result is not None:
-                output_result += output
-            else:
-                output_result = np.zeros_like(output) + output
+                if img_gt is not None:
+                    img_gt = img_gt[:h_old * args.scale, :w_old * args.scale, ...] # crop gt
 
-        output = output_result / 8.0
+                # augmentation processing
+                if aumentation_mode == 0:
+                    output, img_gt = output, img_gt
+                elif aumentation_mode == 1:
+                    output, img_gt = np.rot90(np.flipud(output), k=3), np.rot90(np.flipud(img_gt), k=3)
+                elif aumentation_mode == 2:
+                    output, img_gt = np.flipud(output), np.flipud(img_gt)
+                elif aumentation_mode == 3:
+                    output, img_gt = np.rot90(output), np.rot90(img_gt)
+                elif aumentation_mode == 4:
+                    output, img_gt = np.rot90(np.flipud(output), k=2), np.rot90(np.flipud(img_gt), k=2)
+                elif aumentation_mode == 5:
+                    output, img_gt = np.rot90(output, k=3), np.rot90(img_gt, k=3)
+                elif aumentation_mode == 6:
+                    output, img_gt = np.rot90(output, k=2), np.rot90(img_gt, k=2)
+                elif aumentation_mode == 7:
+                    output, img_gt = np.rot90(np.flipud(output), k=1), np.rot90(np.flipud(img_gt), k=1)
+
+                if output_result is not None:
+                    output_result += output
+                else:
+                    output_result = np.zeros_like(output) + output
+
+        output = output_result / (len(aumentation_modes) * len(aumentation_rgbs))
+        output_logits[imgname] = output
         output = (output * 255.0).round().astype(np.uint8)  # float32 to uint8
-        # cv2.imwrite(f'{save_dir}/{imgname}.png', output)
+        cv2.imwrite(f'{save_dir}/{imgname}.png', output)
 
         # evaluate psnr/ssim/psnr_b
         if img_gt is not None:
@@ -131,9 +140,9 @@ def main():
             if args.task in ['jpeg_car']:
                 psnr_b = util.calculate_psnrb(output, img_gt, crop_border=border, test_y_channel=True)
                 test_results['psnr_b'].append(psnr_b)
-            print('Testing {:d} {:6s} - PSNR: {:.2f} dB; SSIM: {:.4f}; '
-                'PSNR_Y: {:.2f} dB; SSIM_Y: {:.4f}; '
-                'PSNR_B: {:.2f} dB.'.
+            print('Testing {:d} {:6s} - PSNR: {:.4f} dB; SSIM: {:.4f}; '
+                'PSNR_Y: {:.4f} dB; SSIM_Y: {:.4f}; '
+                'PSNR_B: {:.4f} dB.'.
                 format(idx, imgname, psnr, ssim, psnr_y, ssim_y, psnr_b))
         else:
             print('Testing {:d} {:20s}'.format(idx, imgname))
@@ -142,22 +151,24 @@ def main():
     if img_gt is not None:
         ave_psnr = sum(test_results['psnr']) / len(test_results['psnr'])
         ave_ssim = sum(test_results['ssim']) / len(test_results['ssim'])
-        print('\n{} \n-- Average PSNR/SSIM(RGB): {:.2f} dB; {:.4f}'.format(save_dir, ave_psnr, ave_ssim))
+        print('\n{} \n-- Average PSNR/SSIM(RGB): {:.4f} dB; {:.4f}'.format(save_dir, ave_psnr, ave_ssim))
         if img_gt.ndim == 3:
             ave_psnr_y = sum(test_results['psnr_y']) / len(test_results['psnr_y'])
             ave_ssim_y = sum(test_results['ssim_y']) / len(test_results['ssim_y'])
-            print('-- Average PSNR_Y/SSIM_Y: {:.2f} dB; {:.4f}'.format(ave_psnr_y, ave_ssim_y))
+            print('-- Average PSNR_Y/SSIM_Y: {:.4f} dB; {:.4f}'.format(ave_psnr_y, ave_ssim_y))
         if args.task in ['jpeg_car']:
             ave_psnr_b = sum(test_results['psnr_b']) / len(test_results['psnr_b'])
-            print('-- Average PSNR_B: {:.2f} dB'.format(ave_psnr_b))
+            print('-- Average PSNR_B: {:.4f} dB'.format(ave_psnr_b))
+
+    torch.save(output_logits, './logits_' + args.model_path.split('/')[-1])
 
 
 def define_model(args):
     # 001 classical image sr
     if args.task == 'classical_sr':
-        model = net(upscale=args.scale, in_chans=3, img_size=args.training_patch_size, window_size=12,
+        model = net(upscale=args.scale, in_chans=3, img_size=args.training_patch_size, window_size=8,
                     img_range=1.0, depths=[9, 9, 9, 9, 9, 9], embed_dim=180, num_heads=[9, 9, 9, 9, 9, 9],
-                    mlp_ratio=2, upsampler="pixelshuffle", resi_connection="3conv")
+                    mlp_ratio=2, upsampler="pixelshuffle", resi_connection="1conv")
         param_key_g = 'params'
 
     # 002 lightweight image sr

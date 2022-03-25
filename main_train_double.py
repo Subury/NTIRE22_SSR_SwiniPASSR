@@ -108,6 +108,7 @@ def main(json_path=None):
         logger.info(model.info_network())
     
     for epoch in range(1000000):
+        
         for train_data in train_loader:
 
             current_step += 1
@@ -153,7 +154,9 @@ def main(json_path=None):
 
             if current_step % opt['repeat_step'] == 0:
                 model.update_learning_rate(current_step)
-            
+
+        if current_step == 500000:
+            break            
 
 if __name__ == '__main__':
     main()
