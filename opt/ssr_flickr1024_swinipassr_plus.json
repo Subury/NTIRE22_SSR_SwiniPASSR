@@ -41,7 +41,7 @@
       , "upscale": 4
       , "in_chans": 3 
       , "img_size": 24
-      , "window_size": 8
+      , "window_size": 12
       , "img_range": 1.0 
       , "depths": [9, 9, 9, 9, 9, 9] 
       , "embed_dim": 180
@@ -57,10 +57,10 @@
       "G_lossfn_type": "l1"
       , "G_lossfn_weight": 1.0
   
-      , "E_decay": 0.0
+      , "E_decay": 0.999
   
       , "G_optimizer_type": "adam"
-      , "G_optimizer_lr": 2e-4
+      , "G_optimizer_lr": 1e-4
       , "G_optimizer_wd": 0
       , "G_optimizer_clipgrad": null
       , "G_optimizer_reuse": true
@@ -78,8 +78,14 @@
       , "checkpoint_test": 5000
       , "checkpoint_save": 5000
       , "checkpoint_print": 200
-      , "pretrained": "/workspace/sages/SSR/SwinSSR/pretrained/swinir_psnr_23.50.pth"
+      , "pretrained": "./pretrained/pre_swinipassr_plus.pth"
       , "param_keys": []
+
+      , "weight_sr": 1.0
+      , "weight_photo": 0.1
+      , "weight_smooth": 0.01
+      , "weight_cycle": 0.1
+      , "weight_cons": 0.1
     }
   }
   

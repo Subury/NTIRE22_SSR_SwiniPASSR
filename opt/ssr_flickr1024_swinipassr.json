@@ -78,8 +78,14 @@
       , "checkpoint_test": 5000
       , "checkpoint_save": 5000
       , "checkpoint_print": 200
-      , "pretrained": null
+      , "pretrained": "./pretrained/pre_swinipassr.pth"
       , "param_keys": []
+
+      , "weight_sr": 1.0
+      , "weight_photo": 0.1
+      , "weight_smooth": 0.01
+      , "weight_cycle": 0.01
+      , "weight_cons": 0.01
     }
   }
   

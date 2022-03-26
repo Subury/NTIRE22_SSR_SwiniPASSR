@@ -27,12 +27,12 @@ datas = [ torch.load(f'./logits/{model}', map_location="cpu") for model in os.li
 for idx, path in enumerate(sorted(glob.glob(os.path.join(args.folder_lq, '*')))):
     (imgname, imgext) = os.path.splitext(os.path.basename(path))
     if args.folder_gt is not None:
-        img_gt = (cv2.imread(path, cv2.IMREAD_COLOR).astype(np.float32) / 255. * 255.0).round().astype(np.uint8)
+        img_gt = (cv2.imread(args.folder_gt + '/' + imgname + imgext, cv2.IMREAD_COLOR).astype(np.float32) / 255. * 255.0).round().astype(np.uint8)
     
     img_sr = sum([data[imgname] for data in datas]) / len(datas)
     img_sr = (img_sr * 255.0).round().astype(np.uint8) 
     
-    cv2.imwrite(f'/workspace/SwinSSR/results/swinir_classical_sr_x4/{imgname}.png', img_sr)
+    cv2.imwrite(f'./results/{imgname}.png', img_sr)
 
     if args.folder_gt is not None:
         test_results['psnr'].append(peak_signal_noise_ratio(img_gt, img_sr))

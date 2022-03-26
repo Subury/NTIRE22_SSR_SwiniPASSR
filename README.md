@@ -9,20 +9,25 @@
 >     2. 转换 model_swinir 模型为 swinipassr 的预训练模型 pre_swinipassr 
          ```
          挑选 swinir 结果中 psnr 值 超过 23.70+ 的模型， 进行模型转换
-         python swinir_to_swinipassr.py ./superresolution/sr_flickr1024_swinir/models/*_G.pth ./pretrained/pre_swinipassr.pth
+         python swinir_to_swinipassr.py --swinir_path ./superresolution/sr_flickr1024_swinir/models/*_G.pth --swinipassr_path ./pretrained/pre_swinipassr.pth
+         ```
+      
+>     3. 训练基于swinipassr的双目训练模型 model_swinipassr 
+         ```
+         python -m torch.distributed.launch --nproc_per_node=2 --master_port=1234 main_train_double.py --opt ./opt/ssr_flickr1024_swinipassr.json  --dist True
          ```
 
->     3. 取 swinipassr 的最后5个模型进行平均，生成最终的finetune模型
+>     4. 取 swinipassr 的最后5个模型进行平均，生成最终的finetune模型
          ```
          python swinipassr_to_plus.py
          ```
 
->     4. 对 model_swinipassr 进行 finetune， 获取模型 model_swinipassr_plus
+>     5. 对 model_swinipassr 进行 finetune， 获取模型 model_swinipassr_plus
          ```
          python -m torch.distributed.launch --nproc_per_node=2 --master_port=1234 main_train_double.py --opt ./opt/ssr_flickr1024_swinipassr_plus.json  --dist True
          ```
 
->     5. 在观察到 ssr_flickr1024_swinipassr_plus 训练过程中出现过拟合的情况时，手动停止模型，并对过拟前模型进行平均，得到最终模型。 例如该模型训练日志如下所示：
+>     6. 在观察到 ssr_flickr1024_swinipassr_plus 训练过程中出现过拟合的情况时，手动停止模型，并对过拟前模型进行平均，得到最终模型。 例如该模型训练日志如下所示：
          ```
          input:
                cat ./superresolution/sr_flickr1024_swinir_plus/train.log | grep "Validation"
@@ -42,7 +47,7 @@
          ```
          则应该停止模型，并选择 iter50000 之前的所有模型进行平均
      
->     6. 根据 步骤5 得到的iter数，来生成最终模型. 模型位于./pretrained/swinipassr_final.pth
+>     7. 根据 步骤5 得到的iter数，来生成最终模型. 模型位于./pretrained/swinipassr_final.pth
          ```
          python swinipassr_final.py --iter 50000
          ```
@@ -64,7 +69,7 @@
          , "num_heads": [9, 9, 9, 9, 9, 9] 
          ```
 >     4. 执行训练流程
->     5. mv /pretrained/swinipassr_final.pth ./final_models/P24W12D9E180H9.pth
+>     5. mv ./pretrained/swinipassr_final.pth ./final_models/P24W12D9E180H9.pth
 >     6. python main_test_double.py --task classical_sr --scale 4 --training_patch_size 24 --model_path ./final_models/P24W12D9E180H9.pth --folder_lq test_path
 >     7. rm -rf ./pretrained/* & rm -rf ./superresolution/*  （必须执行）
 >     8. 修改 ./opt/sr_flickr1024_swinir.json, ./opt/ssr_flickr1024_swinipassr.json, ./opt/ssr_flickr1024_swinipassr_plus.json
