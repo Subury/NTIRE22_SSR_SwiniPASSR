@@ -7,7 +7,7 @@ parser.add_argument('--swinir_path', type=str, default=None, help='Path to swini
 parser.add_argument('--swinipassr_path', type=str, default=None, help='Path to swinipassr file.')
 args = parser.parse_args()
 
-data = torch.load(args.swinir_path, map_location="cpu")
+data = torch.load("./superresolution/sr_flickr1024_swinir/models/500000_G.pth ", map_location="cpu")
 new_data = {}
 
 for key in list(data.keys()):
@@ -50,5 +50,5 @@ for key in list(data.keys()):
     else:
         print(key)
     
-torch.save(new_data, args.swinipassr_path)
+torch.save(new_data, "/pretrained/pre_swinipassr.pth")
     

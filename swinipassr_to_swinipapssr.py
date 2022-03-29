@@ -12,4 +12,9 @@ for key in G0.keys():
 
     data[key] = (G0[key] + G1[key] + G2[key] + G3[key] + G4[key]) / 5.0
 
-torch.save(data, './pretrained/pre_swinipassr_plus.pth')
+data["upsample_middle.0.weight"] = data.pop("upsample.0.weight")
+data["upsample_middle.0.bias"] = data.pop("upsample.0.bias")
+data["upsample_last.0.weight"] = data.pop("upsample.2.weight")
+data["upsample_last.0.bias"] = data.pop("upsample.2.bias")
+
+torch.save(data, "./pretrained/pre_swinipapssr.pth")

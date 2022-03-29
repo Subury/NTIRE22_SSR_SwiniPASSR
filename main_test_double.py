@@ -8,7 +8,7 @@ import os
 import torch
 import requests
 
-from models.network_swinipassr import SwiniPASSR as net
+from models.test_network_swinipassr import SwiniPASSR as net
 from utils import utils_calculate_psnr_ssim as util
 
 
@@ -22,13 +22,14 @@ def main():
     parser.add_argument('--training_patch_size', type=int, default=128, help='patch size used in training SwinIR. '
                                        'Just used to differentiate two different settings in Table 2 of the paper. '
                                        'Images are NOT tested patch by patch.')
+    parser.add_argument('--window_size', type=int, default=8, help='window size used in training SwinIR.')
     parser.add_argument('--large_model', action='store_true', help='use large model, only provided for real image sr')
     parser.add_argument('--model_path', type=str,
                         default='model_zoo/swinir/001_classicalSR_DIV2K_s48w8_SwinIR-M_x2.pth')
     parser.add_argument('--folder_lq', type=str, default=None, help='input low-quality test image folder')
     parser.add_argument('--folder_gt', type=str, default=None, help='input ground-truth test image folder')
     parser.add_argument('--tile', type=int, default=None, help='Tile size, None for no tile during testing (testing as a whole)')
-    parser.add_argument('--tile_overlap', type=int, default=32, help='Overlapping of different tiles')
+    parser.add_argument('--tile_overlap', type=int, default=None, help='Overlapping of different tiles')
     args = parser.parse_args()
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -61,11 +62,15 @@ def main():
 
     output_logits = {}
     for idx, path in enumerate(sorted(glob.glob(os.path.join(folder, '*')))):
+
+        if idx > 1:
+            break
+
         output_result = None
 
-        aumentation_modes = range(0, 1, 2)
-        aumentation_rgbs = [([0, 1, 2],[0, 1, 2])]
-        # aumentation_rgbs = [([0,1,2],[0,1,2]), ([1,2,0], [2,0,1]), ([2,0,1], [1, 2, 0]), ([0,2,1], [0, 2, 1]), ([2,1,0], [2,1,0]), ([1,0,2], [1,0,2])]
+        aumentation_modes = range(0, 8, 2)
+        # aumentation_rgbs = [([0, 1, 2],[0, 1, 2])]
+        aumentation_rgbs = [([0,1,2],[0,1,2]), ([1,2,0], [2,0,1]), ([2,0,1], [1, 2, 0]), ([0,2,1], [0, 2, 1]), ([2,1,0], [2,1,0]), ([1,0,2], [1,0,2])]
 
         for aumentation_rgb in aumentation_rgbs:
             for aumentation_mode in aumentation_modes:
@@ -163,6 +168,7 @@ def main():
 
     torch.save(output_logits, './logits/' + args.model_path.split('/')[-1])
 
+
 def define_model(args):
     # 001 classical image sr
     if args.task == 'classical_sr':
@@ -170,10 +176,20 @@ def define_model(args):
             model = net(upscale=args.scale, in_chans=3, img_size=args.training_patch_size, window_size=12,
                         img_range=1.0, depths=[9, 9, 9, 9, 9, 9], embed_dim=180, num_heads=[9, 9, 9, 9, 9, 9],
                         mlp_ratio=2, upsampler="pixelshuffle", resi_connection="1conv")
-        if args.model_path.split("/")[-1].split(".")[0] == "P24W8D9E180H9":
+        elif args.model_path.split("/")[-1].split(".")[0] == "P24W8D9E180H9" or args.model_path.split("/")[-1].split(".")[0] == "P24W8D9E180H9P":
             model = net(upscale=args.scale, in_chans=3, img_size=args.training_patch_size, window_size=8,
                         img_range=1.0, depths=[9, 9, 9, 9, 9, 9], embed_dim=180, num_heads=[9, 9, 9, 9, 9, 9],
                         mlp_ratio=2, upsampler="pixelshuffle", resi_connection="1conv")
+        elif args.model_path.split("/")[-1].split(".")[0] == "P48W12D12E180H10":
+            model = net(upscale=args.scale, in_chans=3, img_size=args.training_patch_size, window_size=12,
+                        img_range=1.0, depths=[12, 12, 12, 12, 12, 12], embed_dim=180, num_heads=[10, 10, 10, 10, 10, 10],
+                        mlp_ratio=2, upsampler="pixelshuffle", resi_connection="1conv")
+        # elif args.model_path.split("/")[-1].split(".")[0] == "P36W12D8E180H6":
+        #     model = net(upscale=args.scale, in_chans=3, img_size=args.training_patch_size, window_size=12,
+        #                 img_range=1.0, depths=[8, 8, 8, 8, 8, 8], embed_dim=180, num_heads=[6, 6, 6, 6, 6, 6],
+        #                 mlp_ratio=2, upsampler="pixelshuffle", resi_connection="1conv")
+        else:
+            pass
                                                 
         param_key_g = 'params'
 
@@ -235,7 +251,7 @@ def setup(args):
         save_dir = f'results/swinir_{args.task}_x{args.scale}'
         folder = args.folder_lq
         border = args.scale
-        window_size = 8
+        window_size = args.window_size
 
     # 003 real-world image sr
     elif args.task in ['real_sr']:
@@ -324,12 +340,33 @@ def get_image_pair(args, path, mode=0, validation=True):
 
 
 def test(left_img_lq, right_img_lq, model, args, window_size):
-    if args.tile is None:
+    if args.tile_overlap is None:
         # test the image as a whole
         output = model(left_img_lq, right_img_lq)[0]
     else:
         # test the image tile by tile
-        raise ValueError("Current not complete ...")
+        b, c, h, w = left_img_lq.size()
+
+        E = torch.zeros(b, c, h*args.scale, w*args.scale).type_as(left_img_lq)
+        W = torch.zeros_like(E)
+
+        # upper
+        left_lr_chop = left_img_lq[..., 0 : h // 2 + args.tile_overlap, :]
+        right_lr_chop = right_img_lq[..., 0 : h // 2 + args.tile_overlap, :]
+        output = model(left_lr_chop, right_lr_chop)[0]
+        output_mask = torch.ones_like(output)
+        E[..., 0 : (h // 2 + args.tile_overlap) * args.scale, :] += output
+        W[..., 0 : (h // 2 + args.tile_overlap) * args.scale, :] += output_mask
+
+        # down
+        left_lr_chop = left_img_lq[..., h // 2 - args.tile_overlap : h, :]
+        right_lr_chop = right_img_lq[..., h // 2 - args.tile_overlap : h, :]
+        output = model(left_lr_chop, right_lr_chop)[0]
+        output_mask = torch.ones_like(output)
+        E[..., (h // 2 - args.tile_overlap) * args.scale : h * args.tile_overlap, :] += output
+        W[..., (h // 2 - args.tile_overlap) * args.scale : h * args.tile_overlap, :] += output_mask
+
+        output = E.div_(W)
 
     return output
 

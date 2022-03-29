@@ -14,4 +14,11 @@ models += [torch.load(f"{args.path}/models/{index}_G.pth", map_location="cpu") f
 for key in models[-1].keys():
     data[key] = sum([model[key] for model in models]) / len(models)
 
-torch.save(data, "./pretrained/swinipassr_final.pth")
+data["upsample.0.weight"] = data.pop("upsample_middle.0.weight")
+data["upsample.0.bias"] = data.pop("upsample_middle.0.bias")
+data["upsample.2.weight"] = data.pop("upsample_last.0.weight")
+data["upsample.2.bias"] = data.pop("upsample_last.0.bias") 
+
+temp1, temp2 = data.pop("conv_middle.weight"), data.pop("conv_middle.bias")
+
+torch.save(data, "./pretrained/swinipapssr_final.pth")

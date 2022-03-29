@@ -26,7 +26,7 @@ class DatasetPSSR(data.Dataset):
         # get paths of L/M/H
         # ------------------------------------
         self.paths_H = sorted(util.get_image_paths(opt['dataroot_H']))
-        self.paths_M = sorted(util.get_image_paths(opt['dataroot_M']))
+        self.paths_M = sorted(util.get_image_paths(opt['dataroot_M'])) if opt['dataroot_M'] is not None else None
         self.paths_L = sorted(util.get_image_paths(opt['dataroot_L']))
 
         assert self.paths_H, 'Error: H path is empty.'
@@ -75,8 +75,8 @@ class DatasetPSSR(data.Dataset):
             # sythesize M image via matlab's bicubic
             # --------------------------------
             H, W = img_H_Left.shape[:2]
-            img_M_Left = util.imresize_np(img_M_Left, 1 / self.sf * 2, True)
-            img_M_Right = util.imresize_np(img_M_Right, 1 / self.sf * 2, True)
+            img_M_Left = util.imresize_np(img_H_Left, 1 / self.sf * 2, True)
+            img_M_Right = util.imresize_np(img_H_Right, 1 / self.sf * 2, True)
 
         # ------------------------------------
         # get L image
@@ -152,7 +152,7 @@ class DatasetPSSR(data.Dataset):
                 'M_Left': img_M_Left, 'M_Right': img_M_Right,
                 'H_Left': img_H_Left, 'H_Right': img_H_Right,
                 'L_Left_path': L_Left_path, 'L_Right_path': L_Right_path, 
-                'M_Left_path': M_Left_path, 'M_Right_path': M_Right_path,
+                'M_Left_path': L_Left_path, 'M_Right_path': L_Right_path,
                 'H_Left_path': H_Left_path, 'H_Right_path': H_Right_path}
 
     def __len__(self):

@@ -40,6 +40,15 @@ class ModelPlain2P(ModelBase):
         self.netG = self.model_to_device(self.netG)
         if self.opt_train['E_decay'] > 0:
             self.netE = define_G(opt).to(self.device).eval()
+
+        # -------------------------------------
+        # setting loss weight
+        # -------------------------------------
+        self.weight_sr = self.opt['train']['weight_sr']
+        self.weight_photo = self.opt['train']['weight_photo']
+        self.weight_smooth = self.opt['train']['weight_smooth']
+        self.weight_cycle = self.opt['train']['weight_cycle']
+        self.weight_cons = self.opt['train']['weight_cons']
     
     def init_train(self):
         self.load()                           # load model
@@ -205,7 +214,7 @@ class ModelPlain2P(ModelBase):
             loss_cons += self.G_lossfn(middle_SR_left_res * self.V_left.repeat(1, 3, 1, 1), middle_SR_left_resT * self.V_left.repeat(1, 3, 1, 1)) + \
                          self.G_lossfn(middle_SR_right_res * self.V_right.repeat(1, 3, 1, 1), middle_SR_right_resT * self.V_right.repeat(1, 3, 1, 1))
 
-            G_loss = loss_sr + 0.1 * loss_photo + 0.01 * loss_smooth + 0.01 * loss_cycle + 0.01 * loss_cons
+            G_loss = self.weight_sr * loss_sr + self.weight_photo * loss_photo + self.weight_smooth * loss_smooth + self.weight_cycle * loss_cycle + self.weight_cons * loss_cons
             G_loss.backward()
 
         if current_step % self.opt['repeat_step'] == 0:

@@ -677,8 +677,8 @@ class ParallaxAttentionModule(nn.Module):
                             M_right_to_left.permute(0, 2, 1).contiguous().view(-1, w).unsqueeze(2)
                                   ).detach().contiguous().view(b, 1, h, w)   # (B*H*Wr) * Wl * 1
 
-        V_left_tanh = torch.tanh(5 * V_left)
-        V_right_tanh = torch.tanh(5 * V_right)
+        V_left_tanh = torch.tanh(10000 * V_left)
+        V_right_tanh = torch.tanh(10000 * V_right)
 
         x_leftT = torch.bmm(M_right_to_left, x_right.permute(0, 2, 3, 1).contiguous().view(-1, w0, c0)
                             ).contiguous().view(b, h0, w0, c0).permute(0, 3, 1, 2)                           #  B, C0, H0, W0
