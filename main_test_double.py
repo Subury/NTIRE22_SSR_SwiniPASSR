@@ -63,9 +63,6 @@ def main():
     output_logits = {}
     for idx, path in enumerate(sorted(glob.glob(os.path.join(folder, '*')))):
 
-        if idx > 1:
-            break
-
         output_result = None
 
         aumentation_modes = range(0, 8, 2)
